@@ -1,16 +1,20 @@
-from marshmallow import Schema, fields, validates, ValidationError
+from marshmallow import Schema, fields, validates, ValidationError, EXCLUDE
 
 class FHIRServerSchema(Schema):
     """Schema for validating FHIR server configuration data."""
     
+    class Meta:
+        # Ignore unknown fields instead of raising errors
+        unknown = EXCLUDE
+    
     base_url = fields.URL(required=True, error_messages={'required': 'Base URL is required'})
     auth_type = fields.String(required=False, validate=lambda x: x in ['none', 'basic', 'token'])
-    api_key = fields.String(required=False)
-    username = fields.String(required=False)
-    password = fields.String(required=False)
-    name = fields.String(required=False)
-    is_default = fields.Boolean(required=False)
-    config_id = fields.Integer(required=False)
+    api_key = fields.String(required=False, allow_none=True)
+    username = fields.String(required=False, allow_none=True)
+    password = fields.String(required=False, allow_none=True)
+    name = fields.String(required=False, allow_none=True)
+    is_default = fields.Boolean(required=False, allow_none=True)
+    config_id = fields.String(required=False, allow_none=True)
     
     @validates('auth_type')
     def validate_auth_credentials(self, auth_type):

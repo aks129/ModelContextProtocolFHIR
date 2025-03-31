@@ -77,22 +77,29 @@ def settings():
             # Check if we're updating an existing configuration
             config_id = form_data.get('config_id')
             
-            if config_id and config_id.isdigit():
-                # Updating existing configuration
-                config = FHIRServerConfig.query.get(int(config_id))
-                if config:
-                    config.base_url = data['base_url']
-                    config.auth_type = data.get('auth_type')
-                    config.api_key = data.get('api_key')
-                    config.username = data.get('username')
-                    config.password = data.get('password')
-                    config.name = data.get('name', 'Default FHIR Server')
-                    config.is_default = set_as_default
-                    db.session.commit()
-                    logger.debug(f"Updated FHIR server configuration: {config.name} ({config.id})")
-                else:
-                    flash(f"Configuration with ID {config_id} not found", 'danger')
-                    return redirect(url_for('settings'))
+            # Validate config_id is a non-empty string that can be converted to an integer
+            if config_id and config_id.strip():
+                try:
+                    config_id_int = int(config_id)
+                    # Updating existing configuration
+                    config = FHIRServerConfig.query.get(config_id_int)
+                    if config:
+                        config.base_url = data['base_url']
+                        config.auth_type = data.get('auth_type')
+                        config.api_key = data.get('api_key')
+                        config.username = data.get('username')
+                        config.password = data.get('password')
+                        config.name = data.get('name', 'Default FHIR Server')
+                        config.is_default = set_as_default
+                        db.session.commit()
+                        logger.debug(f"Updated FHIR server configuration: {config.name} ({config.id})")
+                    else:
+                        flash(f"Configuration with ID {config_id} not found", 'danger')
+                        return redirect(url_for('settings'))
+                except ValueError:
+                    # If config_id cannot be converted to int, treat it as a new configuration
+                    flash(f"Invalid configuration ID: {config_id}. Creating a new configuration instead.", 'warning')
+                    config_id = None
             else:
                 # Creating a new configuration
                 config = FHIRServerConfig(
@@ -117,12 +124,18 @@ def settings():
                 password=data.get('password')
             )
             
-            # Store connection info in session
-            session['fhir_server'] = {
+            # Create connection info dict with base data
+            fhir_server_info = {
                 'base_url': data['base_url'],
-                'auth_type': data.get('auth_type'),
-                'config_id': config.id if config else None
+                'auth_type': data.get('auth_type')
             }
+            
+            # Only add config_id if config is defined
+            if 'config' in locals() and config:
+                fhir_server_info['config_id'] = config.id
+            
+            # Store connection info in session
+            session['fhir_server'] = fhir_server_info
             
             flash('FHIR server settings updated successfully', 'success')
             return redirect(url_for('settings'))

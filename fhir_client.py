@@ -93,7 +93,7 @@ class FHIRClient:
     
     def is_configured(self):
         """Check if the client is configured with a base URL."""
-        return bool(self.base_url)
+        return self.base_url is not None and bool(self.base_url)
     
     def test_connection(self):
         """
