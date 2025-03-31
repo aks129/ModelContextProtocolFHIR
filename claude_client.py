@@ -215,10 +215,8 @@ class ClaudeClient:
                 "messages": [
                     {"role": "user", "content": user_prompt}
                 ],
-                "system": system_prompt,
-                "metadata": {
-                    "mcp_context": json.dumps(fhir_context)
-                }
+                "system": system_prompt
+                # Removing metadata with mcp_context as it's causing API errors
             }
             
             response = self.client.messages.create(**message_params)
@@ -361,10 +359,8 @@ class ClaudeClient:
                 "messages": [
                     {"role": "user", "content": natural_language_query}
                 ],
-                "system": system_prompt,
-                "metadata": {
-                    "mcp_context": json.dumps(query_context)
-                }
+                "system": system_prompt
+                # Removing metadata with mcp_context as it's causing API errors
             }
             
             response = self.client.messages.create(**message_params)
@@ -605,10 +601,8 @@ class ClaudeClient:
                 "messages": [
                     {"role": "user", "content": user_prompt}
                 ],
-                "system": system_prompt,
-                "metadata": {
-                    "mcp_context": json.dumps(search_context)
-                }
+                "system": system_prompt
+                # Removing metadata with mcp_context as it's causing API errors
             }
             
             response = self.client.messages.create(**message_params)
