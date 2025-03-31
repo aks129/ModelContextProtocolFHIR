@@ -395,12 +395,20 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('queryResultArea').innerHTML = 
           `<div class="alert alert-danger">${data.error}</div>`;
       } else {
-        // Save the generated query parameters for execution
-        generatedQueryParams = data;
+        // Check if we're in inspector mode (data will have fhir_query, inspection, and context)
+        let queryData = data;
+        if (data.fhir_query) {
+          // We're in inspector mode, so we need to get the actual query from fhir_query
+          generatedQueryParams = data.fhir_query;
+          queryData = data.fhir_query;
+        } else {
+          // Regular mode, just use the data directly
+          generatedQueryParams = data;
+        }
         
         // Display the generated parameters
-        const resourceType = data.resourceType || 'Unknown';
-        const params = data.parameters || {};
+        const resourceType = queryData.resourceType || 'Unknown';
+        const params = queryData.parameters || {};
         
         let paramsHTML = '';
         for (const [key, value] of Object.entries(params)) {
@@ -484,8 +492,12 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
     
-    const resourceType = generatedQueryParams.resourceType;
-    const params = generatedQueryParams.parameters || {};
+    // Make sure we're using the actual query params, not the MCP wrapper
+    let queryData = generatedQueryParams;
+    // No need to handle inspector mode here since we already handled it when generating the query
+    
+    const resourceType = queryData.resourceType || 'Unknown';
+    const params = queryData.parameters || {};
     
     // Show loading spinner in search results area
     document.getElementById('searchResultsArea').style.display = 'block';
