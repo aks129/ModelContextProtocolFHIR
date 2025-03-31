@@ -540,14 +540,51 @@ def search_resources(resource_type):
     
     start_time = time.time()
     
+    # Log the search parameters for debugging
+    logger.debug(f"Searching for {resource_type} with parameters: {search_params}")
+    
     try:
         # Validate search request
         schema = FHIRResourceRequestSchema()
         validated_data = schema.load({'resource_type': resource_type, 'search_params': search_params})
         
+        # Clean up parameters - sanitize any parameters that might cause issues
+        clean_params = {}
+        for key, value in validated_data['search_params'].items():
+            # Skip empty parameters
+            if not value or not value.strip():
+                continue
+                
+            # Remove any pipe characters from parameter values (common in AI-generated params)
+            if isinstance(value, str) and '|' in value:
+                value = value.split('|')[0].strip()
+                
+            # Remove full URLs from parameter values - they often cause issues
+            if isinstance(value, str) and ('http://' in value or 'https://' in value):
+                # For code parameters, just use the term itself
+                if key == 'code':
+                    # Extract just the condition name (e.g., "diabetes")
+                    url_parts = value.split('/')
+                    value = url_parts[-1] if url_parts else value
+                else:
+                    # For other parameters, strip out the URL
+                    value = value.split('http')[0].strip()
+            
+            # Add cleaned parameter if it has a value
+            if value and value.strip():
+                clean_params[key] = value
+        
+        # Log the cleaned parameters
+        logger.debug(f"Cleaned parameters for {resource_type}: {clean_params}")
+        
+        # Add count parameter to limit results if not present
+        if '_count' not in clean_params:
+            clean_params['_count'] = '50'
+        
+        # Execute the search with cleaned parameters
         results = fhir_client.search_resources(
             resource_type=validated_data['resource_type'], 
-            params=validated_data['search_params']
+            params=clean_params
         )
         
         # Update log with success
@@ -567,16 +604,38 @@ def search_resources(resource_type):
         
         return jsonify({'error': err.messages}), 400
     except Exception as e:
-        logger.error(f"Error searching for {resource_type} resources: {str(e)}")
+        error_message = str(e)
+        logger.error(f"Error searching for {resource_type} resources: {error_message}")
         
-        # Update log with error
-        log_entry.response_status = 500
-        log_entry.error_message = str(e)
-        log_entry.execution_time_ms = (time.time() - start_time) * 1000
-        db.session.add(log_entry)
-        db.session.commit()
-        
-        return jsonify({'error': str(e)}), 500
+        # Check for specific error types and provide better messages
+        if "search parameter" in error_message.lower() and "not supported" in error_message.lower():
+            # Extract the problematic parameter if possible
+            import re
+            param_match = re.search(r"parameter\s+'([^']+)'", error_message)
+            
+            invalid_param = param_match.group(1) if param_match else "unknown"
+            friendly_error = f"The search parameter '{invalid_param}' is not supported by the FHIR server. Please use only standard FHIR R4 parameters."
+            
+            # Update log with a 400 error for invalid parameters
+            log_entry.response_status = 400
+            log_entry.error_message = friendly_error
+            log_entry.execution_time_ms = (time.time() - start_time) * 1000
+            db.session.add(log_entry)
+            db.session.commit()
+            
+            return jsonify({
+                'error': friendly_error,
+                'details': error_message
+            }), 400
+        else:
+            # Update log with a 500 error for other issues
+            log_entry.response_status = 500
+            log_entry.error_message = error_message
+            log_entry.execution_time_ms = (time.time() - start_time) * 1000
+            db.session.add(log_entry)
+            db.session.commit()
+            
+            return jsonify({'error': error_message}), 500
 
 # Logs API
 @app.route('/api/logs', methods=['GET'])
@@ -773,8 +832,14 @@ def generate_query():
         if not data or 'query' not in data:
             return jsonify({'error': 'No query provided'}), 400
         
+        # Log the incoming query for debugging
+        logger.debug(f"Generating FHIR query from natural language: {data['query']}")
+        
         # Generate FHIR query parameters from natural language
         query_params = claude_client.generate_fhir_query(data['query'])
+        
+        # Log the generated parameters
+        logger.debug(f"Generated FHIR query parameters: {json.dumps(query_params)}")
         
         return jsonify(query_params)
     except Exception as e:

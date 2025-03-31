@@ -181,7 +181,12 @@ class ClaudeClient:
             1. "resourceType": The primary FHIR resource type to search for (e.g., Patient, Observation, Condition)
             2. "parameters": An object containing key-value pairs of valid FHIR search parameters
             
-            IMPORTANT: ONLY use valid FHIR R4 search parameters according to the HL7 FHIR R4 specification!
+            IMPORTANT RULES:
+            1. ONLY use valid FHIR R4 search parameters according to the HL7 FHIR R4 specification
+            2. DO NOT use complex syntax in parameter values (no & or | characters)
+            3. For searching diseases like diabetes, use code=http://snomed.info/sct|73211009
+            4. Generate ONE parameter at a time - each key-value pair should be simple
+            5. Never create parameter names that don't exist in the FHIR spec
             
             Common valid Patient search parameters:
             - _id: Patient resource ID
@@ -194,13 +199,12 @@ class ClaudeClient:
             - address: Address field (supports partial matches)
             - email: Patient's email address
             - phone: Patient's phone number
-            - organization: Managing organization
             - _count: Number of results per page
             
             Common valid Condition search parameters:
-            - patient: Reference to a patient (patient=Patient/123)
-            - clinical-status: active, recurrence, relapse, inactive, remission, resolved 
-            - code: Condition code (supports code or system|code format)
+            - patient: Reference to a patient
+            - clinical-status: active, recurrence, relapse, inactive, remission, resolved
+            - code: Standard medical code (SNOMED/ICD/LOINC)
             - onset-date: Date when condition began
             - recorded-date: Date when condition was recorded
             - _count: Number of results per page
@@ -208,17 +212,28 @@ class ClaudeClient:
             Common search parameter modifiers:
             - :exact - Exact string match
             - :contains - String contains search
-            - :missing - Check if value is missing (true/false)
-            - :text - Text search
-            - eq, ne, gt, lt, ge, le - Comparison operators (for dates and numbers)
+            - gt, lt, ge, le - Comparison operators (for dates and numbers)
             
-            Do NOT use made-up search parameters like 'age'. For example, to search for patients by age, you must convert age to birthdate range.
+            DIABETES SEARCH EXAMPLE:
+            When searching for diabetes, use the Condition resource with a standard code:
+            {
+              "resourceType": "Condition",
+              "parameters": {
+                "code": "diabetes"
+              }
+            }
             
-            For example, to find 45-year-old patients, use:
-            birthdate=ge2024-03-31&birthdate=le2025-03-31 (adjust dates based on current date and age)
+            AGE SEARCH EXAMPLE:
+            To search for patients by age, convert to birthdate range with TWO SEPARATE parameters:
+            {
+              "resourceType": "Patient",
+              "parameters": {
+                "birthdate": "ge2024-01-01",
+                "_count": "100"
+              }
+            }
             
-            Make sure your response is valid JSON format and usable directly in a FHIR API call.
-            Always return a proper JSON structure even if the query is ambiguous.
+            Make sure your response ONLY contains valid JSON format with no explanations or comments.
             """
             
             # Generate the FHIR search parameters
@@ -264,6 +279,36 @@ class ClaudeClient:
                 if "parameters" not in result:
                     logger.warning("parameters missing from Claude response, using empty parameters")
                     result["parameters"] = {}
+                
+                # Sanitize parameter values - remove any invalid characters
+                cleaned_params = {}
+                for param_name, param_value in result["parameters"].items():
+                    # Skip invalid parameters
+                    if not param_name or not isinstance(param_name, str):
+                        continue
+                        
+                    # Convert to string if not already
+                    if not isinstance(param_value, str):
+                        param_value = str(param_value)
+                    
+                    # Remove any pipe characters, URLs, and complex operators
+                    if '|' in param_value:
+                        param_value = param_value.split('|')[0]
+                    
+                    # Remove any http:// or https:// URLs
+                    if 'http://' in param_value or 'https://' in param_value:
+                        param_value = param_value.split('http')[0].strip()
+                        
+                    # Ensure no empty parameter values
+                    if param_value.strip():
+                        cleaned_params[param_name] = param_value
+                
+                # Replace the parameters with sanitized ones
+                result["parameters"] = cleaned_params
+                
+                # Always add _count parameter to limit results
+                if "_count" not in result["parameters"]:
+                    result["parameters"]["_count"] = "50"
                 
                 return result
                 
