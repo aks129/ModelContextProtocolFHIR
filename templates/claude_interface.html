@@ -105,9 +105,15 @@
           <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
               <h5 class="mb-0">FHIR Resource</h5>
-              <button class="btn btn-sm btn-primary" id="analyzeResourceBtn" {% if not claude_status.claude_configured %}disabled{% endif %}>
-                <i class="fas fa-brain me-1"></i> Analyze
-              </button>
+              <div>
+                <div class="form-check form-switch d-inline-block me-2">
+                  <input class="form-check-input" type="checkbox" id="inspectorModeSwitch">
+                  <label class="form-check-label small" for="inspectorModeSwitch">Inspector Mode</label>
+                </div>
+                <button class="btn btn-sm btn-primary" id="analyzeResourceBtn" {% if not claude_status.claude_configured %}disabled{% endif %}>
+                  <i class="fas fa-brain me-1"></i> Analyze
+                </button>
+              </div>
             </div>
             <div class="card-body">
               <div class="form-group">
@@ -143,9 +149,15 @@
           <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
               <h5 class="mb-0">Natural Language Query</h5>
-              <button class="btn btn-sm btn-primary" id="generateQueryBtn" {% if not claude_status.claude_configured %}disabled{% endif %}>
-                <i class="fas fa-code me-1"></i> Generate Query
-              </button>
+              <div>
+                <div class="form-check form-switch d-inline-block me-2">
+                  <input class="form-check-input" type="checkbox" id="queryInspectorModeSwitch">
+                  <label class="form-check-label small" for="queryInspectorModeSwitch">Inspector Mode</label>
+                </div>
+                <button class="btn btn-sm btn-primary" id="generateQueryBtn" {% if not claude_status.claude_configured %}disabled{% endif %}>
+                  <i class="fas fa-code me-1"></i> Generate Query
+                </button>
+              </div>
             </div>
             <div class="card-body">
               <div class="form-group">
@@ -200,8 +212,12 @@
       <div class="row">
         <div class="col-12">
           <div class="card mb-4">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
               <h5 class="mb-0">Chat with Claude</h5>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="chatInspectorModeSwitch">
+                <label class="form-check-label small" for="chatInspectorModeSwitch">Inspector Mode</label>
+              </div>
             </div>
             <div class="card-body">
               <div id="aiResponseArea" class="form-control mb-3">
@@ -257,6 +273,9 @@ document.addEventListener('DOMContentLoaded', function() {
       document.getElementById('analyzeLoading').style.display = 'inline-block';
       document.getElementById('resourceAnalysisArea').innerHTML = '<div class="text-muted">Analyzing resource...</div>';
       
+      // Check if inspector mode is enabled
+      const inspectorMode = document.getElementById('inspectorModeSwitch').checked;
+      
       // Call the API
       fetch('/api/claude/analyze-resource', {
         method: 'POST',
@@ -264,7 +283,8 @@ document.addEventListener('DOMContentLoaded', function() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          resource: resourceJson
+          resource: resourceJson,
+          inspector_mode: inspectorMode
         })
       })
       .then(response => response.json())
@@ -282,7 +302,51 @@ document.addEventListener('DOMContentLoaded', function() {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>');
             
-          document.getElementById('resourceAnalysisArea').innerHTML = formattedAnalysis;
+          // Check if inspector data is available (in inspector mode)
+          if (data.inspection) {
+            // Create HTML for the inspector data
+            const inspectionData = data.inspection;
+            const contextData = data.context;
+            
+            const inspectionHTML = `
+              <div class="mb-4">
+                ${formattedAnalysis}
+              </div>
+              
+              <div class="card bg-dark mb-3">
+                <div class="card-header">
+                  <h6 class="mb-0">
+                    <i class="fas fa-info-circle me-1"></i> Inspector Data
+                  </h6>
+                </div>
+                <div class="card-body">
+                  <div class="mb-3">
+                    <h6>Model: ${inspectionData.output.model}</h6>
+                    <div class="d-flex gap-3">
+                      <div><strong>Input tokens:</strong> ${inspectionData.output.usage.input_tokens}</div>
+                      <div><strong>Output tokens:</strong> ${inspectionData.output.usage.output_tokens}</div>
+                      <div><strong>Stop reason:</strong> ${inspectionData.output.stop_reason}</div>
+                    </div>
+                  </div>
+                  
+                  <div class="mb-3">
+                    <h6>Context</h6>
+                    <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(contextData, null, 2)}</pre>
+                  </div>
+                  
+                  <div>
+                    <h6>Full Inspection Object</h6>
+                    <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(inspectionData, null, 2)}</pre>
+                  </div>
+                </div>
+              </div>
+            `;
+            
+            document.getElementById('resourceAnalysisArea').innerHTML = inspectionHTML;
+          } else {
+            // Just show the regular analysis without inspection data
+            document.getElementById('resourceAnalysisArea').innerHTML = formattedAnalysis;
+          }
         }
       })
       .catch(error => {
@@ -308,6 +372,9 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('queryResultArea').innerHTML = '<div class="text-muted">Generating FHIR query...</div>';
     document.getElementById('executeQueryBtn').style.display = 'none';
     
+    // Check if inspector mode is enabled
+    const inspectorMode = document.getElementById('queryInspectorModeSwitch').checked;
+    
     // Call the API
     fetch('/api/claude/generate-query', {
       method: 'POST',
@@ -315,7 +382,8 @@ document.addEventListener('DOMContentLoaded', function() {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        query: queryText
+        query: queryText,
+        inspector_mode: inspectorMode
       })
     })
     .then(response => response.json())
@@ -339,7 +407,7 @@ document.addEventListener('DOMContentLoaded', function() {
           paramsHTML += `<tr><td>${key}</td><td>${value}</td></tr>`;
         }
         
-        document.getElementById('queryResultArea').innerHTML = `
+        let queryResultHTML = `
           <div class="mb-2">
             <strong>Resource Type:</strong> ${resourceType}
           </div>
@@ -358,6 +426,45 @@ document.addEventListener('DOMContentLoaded', function() {
             </tbody>
           </table>
         `;
+        
+        // Check if inspector data is available (in inspector mode)
+        if (data.inspection) {
+          // Add the inspector data
+          const inspectionData = data.inspection;
+          const contextData = data.context;
+          
+          queryResultHTML += `
+            <div class="card bg-dark mt-4 mb-3">
+              <div class="card-header">
+                <h6 class="mb-0">
+                  <i class="fas fa-info-circle me-1"></i> Inspector Data
+                </h6>
+              </div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <h6>Model: ${inspectionData.output.model}</h6>
+                  <div class="d-flex gap-3">
+                    <div><strong>Input tokens:</strong> ${inspectionData.output.usage.input_tokens}</div>
+                    <div><strong>Output tokens:</strong> ${inspectionData.output.usage.output_tokens}</div>
+                    <div><strong>Stop reason:</strong> ${inspectionData.output.stop_reason}</div>
+                  </div>
+                </div>
+                
+                <div class="mb-3">
+                  <h6>Context</h6>
+                  <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(contextData, null, 2)}</pre>
+                </div>
+                
+                <div>
+                  <h6>Full Inspection Object</h6>
+                  <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(inspectionData, null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+        
+        document.getElementById('queryResultArea').innerHTML = queryResultHTML;
         
         // Show the execute button
         document.getElementById('executeQueryBtn').style.display = 'inline-block';
@@ -407,6 +514,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Get the original query
         const originalQuery = document.getElementById('queryInput').value;
         
+        // Get inspector mode
+        const inspectorMode = document.getElementById('queryInspectorModeSwitch').checked;
+        
         // Call the analyze API
         fetch('/api/claude/analyze-search-results', {
           method: 'POST',
@@ -415,7 +525,8 @@ document.addEventListener('DOMContentLoaded', function() {
           },
           body: JSON.stringify({
             query: originalQuery,
-            results: data
+            results: data,
+            inspector_mode: inspectorMode
           })
         })
         .then(response => response.json())
@@ -431,8 +542,51 @@ document.addEventListener('DOMContentLoaded', function() {
               .replace(/\n\n/g, '<br><br>')
               .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
               .replace(/\*(.*?)\*/g, '<em>$1</em>');
+            
+            // Check if inspector data is available
+            if (analysisData.inspection) {
+              // Create HTML for the inspector data
+              const inspectionData = analysisData.inspection;
+              const contextData = analysisData.context;
               
-            document.getElementById('searchAnalysisArea').innerHTML = formattedAnalysis;
+              const inspectionHTML = `
+                <div class="mb-4">
+                  ${formattedAnalysis}
+                </div>
+                
+                <div class="card bg-dark mb-3">
+                  <div class="card-header">
+                    <h6 class="mb-0">
+                      <i class="fas fa-info-circle me-1"></i> Inspector Data
+                    </h6>
+                  </div>
+                  <div class="card-body">
+                    <div class="mb-3">
+                      <h6>Model: ${inspectionData.output.model}</h6>
+                      <div class="d-flex gap-3">
+                        <div><strong>Input tokens:</strong> ${inspectionData.output.usage.input_tokens}</div>
+                        <div><strong>Output tokens:</strong> ${inspectionData.output.usage.output_tokens}</div>
+                        <div><strong>Stop reason:</strong> ${inspectionData.output.stop_reason}</div>
+                      </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                      <h6>Context</h6>
+                      <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(contextData, null, 2)}</pre>
+                    </div>
+                    
+                    <div>
+                      <h6>Full Inspection Object</h6>
+                      <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(inspectionData, null, 2)}</pre>
+                    </div>
+                  </div>
+                </div>
+              `;
+              
+              document.getElementById('searchAnalysisArea').innerHTML = inspectionHTML;
+            } else {
+              document.getElementById('searchAnalysisArea').innerHTML = formattedAnalysis;
+            }
           }
         })
         .catch(error => {
@@ -480,6 +634,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const responseArea = document.getElementById('aiResponseArea');
     responseArea.scrollTop = responseArea.scrollHeight;
     
+    // Get inspector mode
+    const inspectorMode = document.getElementById('chatInspectorModeSwitch').checked;
+    
     // Call the API
     fetch('/api/claude/generate-response', {
       method: 'POST',
@@ -487,7 +644,8 @@ document.addEventListener('DOMContentLoaded', function() {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        prompt: promptText
+        prompt: promptText,
+        inspector_mode: inspectorMode
       })
     })
     .then(response => response.json())
@@ -509,8 +667,52 @@ document.addEventListener('DOMContentLoaded', function() {
           .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
           .replace(/\*(.*?)\*/g, '<em>$1</em>');
         
-        document.getElementById('aiResponseArea').innerHTML = 
-          `${currentContent}${formattedResponse}`;
+        // Check if in inspector mode with inspection data
+        if (data.inspection) {
+          // Create HTML for the inspector data
+          const inspectionData = data.inspection;
+          const contextData = data.context || {};
+          
+          const inspectionHTML = `
+            <div class="mb-3">
+              ${formattedResponse}
+            </div>
+            
+            <div class="card bg-dark mb-3">
+              <div class="card-header">
+                <h6 class="mb-0">
+                  <i class="fas fa-info-circle me-1"></i> Inspector Data
+                </h6>
+              </div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <h6>Model: ${inspectionData.output.model}</h6>
+                  <div class="d-flex gap-3">
+                    <div><strong>Input tokens:</strong> ${inspectionData.output.usage.input_tokens}</div>
+                    <div><strong>Output tokens:</strong> ${inspectionData.output.usage.output_tokens}</div>
+                    <div><strong>Stop reason:</strong> ${inspectionData.output.stop_reason}</div>
+                  </div>
+                </div>
+                
+                <div class="mb-3">
+                  <h6>Context</h6>
+                  <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(contextData, null, 2)}</pre>
+                </div>
+                
+                <div>
+                  <h6>Full Inspection Object</h6>
+                  <pre class="bg-dark text-light p-2 rounded" style="max-height: 200px; overflow: auto;">${JSON.stringify(inspectionData, null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          `;
+          
+          document.getElementById('aiResponseArea').innerHTML = 
+            `${currentContent}${inspectionHTML}`;
+        } else {
+          document.getElementById('aiResponseArea').innerHTML = 
+            `${currentContent}${formattedResponse}`;
+        }
       }
       
       // Auto-scroll to the bottom

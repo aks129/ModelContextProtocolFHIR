@@ -41,6 +41,12 @@
                            href="{{ url_for('documentation') }}">Documentation</a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link {% if request.path == url_for('mcp_documentation') %}active{% endif %}" 
+                           href="{{ url_for('mcp_documentation') }}">
+                           <i class="fas fa-exchange-alt me-1"></i>MCP Docs
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link {% if request.path == url_for('claude_interface') %}active{% endif %}" 
                            href="{{ url_for('claude_interface') }}">
                            <i class="fas fa-robot me-1"></i>Claude AI

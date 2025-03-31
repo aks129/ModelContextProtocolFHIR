@@ -47,6 +47,11 @@ def documentation():
     """Render the API documentation page."""
     return render_template('documentation.html')
 
+@app.route('/mcp-documentation')
+def mcp_documentation():
+    """Render the Model Context Protocol (MCP) documentation page."""
+    return render_template('mcp_documentation.html')
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     """
