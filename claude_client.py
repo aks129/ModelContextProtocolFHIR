@@ -206,9 +206,11 @@ class ClaudeClient:
             - patient: Reference to a patient
             - clinical-status: active, recurrence, relapse, inactive, remission, resolved
             - code: Standard medical code (SNOMED/ICD/LOINC)
+            - code:text: Text search for condition description (diabetes, headache, etc.)
             - onset-date: Date when condition began
             - recorded-date: Date when condition was recorded
             - _count: Number of results per page
+            - _summary: Use "count" to get total count only
             
             Common search parameter modifiers:
             - :exact - Exact string match
@@ -216,11 +218,12 @@ class ClaudeClient:
             - gt, lt, ge, le - Comparison operators (for dates and numbers)
             
             DIABETES SEARCH EXAMPLE:
-            When searching for diabetes, use the Condition resource with a standard code:
+            When searching for diabetes, use the Condition resource with text search:
             {
               "resourceType": "Condition",
               "parameters": {
-                "code": "diabetes"
+                "code:text": "diabetes",
+                "_summary": "count"
               }
             }
             
@@ -306,19 +309,37 @@ class ClaudeClient:
                 
                 # Special handling for searches about conditions (especially diabetes)
                 if result["resourceType"] == "Condition":
-                    # For diabetes searches
-                    if "diabetes" in natural_language_query.lower() and "code" not in cleaned_params:
-                        logger.debug("Adding missing code=diabetes parameter for diabetes search")
-                        cleaned_params["code"] = "diabetes"
-                    # For any other medical condition searches
-                    elif "code" not in cleaned_params:
-                        # Extract potential condition from the query
-                        for disease in ["hypertension", "asthma", "cancer", "heart disease", 
-                                       "copd", "depression", "arthritis", "alzheimer"]:
-                            if disease in natural_language_query.lower():
-                                logger.debug(f"Adding missing code={disease} parameter")
-                                cleaned_params["code"] = disease
-                                break
+                    # Check if code:text is already present
+                    if "code:text" not in cleaned_params and "code" not in cleaned_params:
+                        # For diabetes searches
+                        if "diabetes" in natural_language_query.lower():
+                            logger.debug("Adding missing code:text=diabetes parameter for diabetes search")
+                            cleaned_params["code:text"] = "diabetes"
+                        # For any other medical condition searches
+                        else:
+                            # Extract potential condition from the query
+                            for disease in ["hypertension", "asthma", "cancer", "heart disease", 
+                                           "copd", "depression", "arthritis", "alzheimer", "headache"]:
+                                if disease in natural_language_query.lower():
+                                    logger.debug(f"Adding missing code:text={disease} parameter")
+                                    cleaned_params["code:text"] = disease
+                                    break
+                    
+                    # If user explicitly asks for code:text search
+                    elif "code:text" in natural_language_query.lower() and "code:text" not in cleaned_params:
+                        # Extract the condition after "code:text"
+                        import re
+                        match = re.search(r"code:text\s+(\w+)", natural_language_query.lower())
+                        if match:
+                            condition = match.group(1)
+                            logger.debug(f"Detected explicit code:text request for {condition}")
+                            cleaned_params["code:text"] = condition
+                            
+                    # Convert code to code:text for better text-based searches
+                    if "code" in cleaned_params and "code:text" not in cleaned_params:
+                        condition = cleaned_params.pop("code")
+                        logger.debug(f"Converting code to code:text for {condition}")
+                        cleaned_params["code:text"] = condition
                 
                 # If asking about "how many patients" but searching Condition resource
                 if "how many patient" in natural_language_query.lower() and result["resourceType"] == "Condition":
