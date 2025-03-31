@@ -1,0 +1,489 @@
+{% extends "base.html" %}
+
+{% block title %}MCP FHIR Server - FHIR Explorer{% endblock %}
+
+{% block head %}
+<style>
+    .resource-tree {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .json-viewer {
+        background-color: #1e1e1e;
+        border-radius: 5px;
+        padding: 15px;
+        font-family: monospace;
+        min-height: 300px;
+        max-height: 600px;
+        overflow: auto;
+    }
+    
+    .json-key {
+        color: #9cdcfe;
+    }
+    
+    .json-string {
+        color: #ce9178;
+    }
+    
+    .json-number {
+        color: #b5cea8;
+    }
+    
+    .json-boolean {
+        color: #569cd6;
+    }
+    
+    .json-null {
+        color: #569cd6;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">
+        <h1 class="card-title mb-0">
+            <i class="fas fa-search me-2"></i>FHIR Explorer
+        </h1>
+    </div>
+    <div class="card-body">
+        <p class="lead">
+            Explore and search FHIR resources on the connected server.
+        </p>
+        
+        <div class="row">
+            <div class="col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-secondary">
+                        <h3 class="h5 mb-0">Resource Types</h3>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group resource-tree" id="resourceTypesList">
+                            <div class="d-flex justify-content-center p-3">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header bg-secondary">
+                        <h3 class="h5 mb-0">Search Parameters</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="searchForm">
+                            <div class="mb-3">
+                                <label for="resourceType" class="form-label">Resource Type</label>
+                                <select class="form-select" id="resourceType" name="resourceType" required>
+                                    <option value="">Select Resource Type</option>
+                                </select>
+                            </div>
+                            
+                            <div id="dynamicSearchParams">
+                                <!-- Dynamic search parameters will be added here -->
+                            </div>
+                            
+                            <div class="mb-3">
+                                <button type="button" id="addSearchParam" class="btn btn-sm btn-secondary">
+                                    <i class="fas fa-plus me-1"></i>Add Parameter
+                                </button>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search me-1"></i>Search
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-secondary d-flex justify-content-between align-items-center">
+                        <h3 class="h5 mb-0">Results</h3>
+                        <div>
+                            <button class="btn btn-sm btn-outline-light" id="copyResults">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="json-viewer" id="resultsViewer">
+                            <div class="p-3 text-muted">
+                                Search results will appear here.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="resourceDetailModal" tabindex="-1" aria-labelledby="resourceDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="resourceDetailModalLabel">Resource Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="json-viewer" id="resourceDetailViewer"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const resourceTypesList = document.getElementById('resourceTypesList');
+        const resourceTypeSelect = document.getElementById('resourceType');
+        const dynamicSearchParams = document.getElementById('dynamicSearchParams');
+        const addSearchParamBtn = document.getElementById('addSearchParam');
+        const searchForm = document.getElementById('searchForm');
+        const resultsViewer = document.getElementById('resultsViewer');
+        const copyResultsBtn = document.getElementById('copyResults');
+        const resourceDetailModal = new bootstrap.Modal(document.getElementById('resourceDetailModal'));
+        const resourceDetailViewer = document.getElementById('resourceDetailViewer');
+        
+        // Common FHIR resource types
+        const commonResourceTypes = [
+            'Patient', 'Observation', 'Condition', 'Procedure', 'MedicationRequest',
+            'Encounter', 'DiagnosticReport', 'AllergyIntolerance', 'Immunization',
+            'CarePlan', 'Goal', 'Practitioner', 'Organization', 'Location'
+        ];
+        
+        // Load resource types
+        function loadResourceTypes() {
+            // First, add common resource types from our predefined list
+            resourceTypesList.innerHTML = '';
+            resourceTypeSelect.innerHTML = '<option value="">Select Resource Type</option>';
+            
+            commonResourceTypes.forEach(type => {
+                const listItem = document.createElement('a');
+                listItem.href = '#';
+                listItem.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                listItem.innerHTML = `
+                    ${type}
+                    <span class="badge bg-primary rounded-pill">
+                        <i class="fas fa-chevron-right"></i>
+                    </span>
+                `;
+                listItem.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    resourceTypeSelect.value = type;
+                    // Trigger change event to update dynamic params
+                    const event = new Event('change');
+                    resourceTypeSelect.dispatchEvent(event);
+                });
+                resourceTypesList.appendChild(listItem);
+                
+                // Also add to the select dropdown
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                resourceTypeSelect.appendChild(option);
+            });
+            
+            // Try to get the full list from the server's capability statement
+            fetch('/api/fhir/metadata')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to load metadata');
+                    }
+                    return response.json();
+                })
+                .then(metadata => {
+                    // Extract resource types from capability statement if available
+                    if (metadata && metadata.rest && metadata.rest[0] && metadata.rest[0].resource) {
+                        const serverResourceTypes = metadata.rest[0].resource.map(r => r.type);
+                        
+                        // Add any resource types not already in our common list
+                        serverResourceTypes.forEach(type => {
+                            if (!commonResourceTypes.includes(type)) {
+                                const listItem = document.createElement('a');
+                                listItem.href = '#';
+                                listItem.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                                listItem.innerHTML = `
+                                    ${type}
+                                    <span class="badge bg-secondary rounded-pill">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </span>
+                                `;
+                                listItem.addEventListener('click', (e) => {
+                                    e.preventDefault();
+                                    resourceTypeSelect.value = type;
+                                    // Trigger change event to update dynamic params
+                                    const event = new Event('change');
+                                    resourceTypeSelect.dispatchEvent(event);
+                                });
+                                resourceTypesList.appendChild(listItem);
+                                
+                                // Also add to the select dropdown
+                                const option = document.createElement('option');
+                                option.value = type;
+                                option.textContent = type;
+                                resourceTypeSelect.appendChild(option);
+                            }
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading metadata:', error);
+                    resourceTypesList.innerHTML = `
+                        <div class="list-group-item text-danger">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            Error loading resource types: ${error.message}
+                        </div>
+                    `;
+                });
+        }
+        
+        // Add a new search parameter field
+        function addSearchParamField() {
+            const paramRow = document.createElement('div');
+            paramRow.className = 'row mb-3 search-param-row';
+            paramRow.innerHTML = `
+                <div class="col-5">
+                    <input type="text" class="form-control param-name" placeholder="Parameter name">
+                </div>
+                <div class="col-5">
+                    <input type="text" class="form-control param-value" placeholder="Value">
+                </div>
+                <div class="col-2">
+                    <button type="button" class="btn btn-danger remove-param">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            
+            // Add event listener to remove button
+            paramRow.querySelector('.remove-param').addEventListener('click', function() {
+                paramRow.remove();
+            });
+            
+            dynamicSearchParams.appendChild(paramRow);
+        }
+        
+        // Prepare query parameters from form
+        function getSearchParams() {
+            const params = {};
+            const paramRows = document.querySelectorAll('.search-param-row');
+            
+            paramRows.forEach(row => {
+                const paramName = row.querySelector('.param-name').value.trim();
+                const paramValue = row.querySelector('.param-value').value.trim();
+                
+                if (paramName && paramValue) {
+                    params[paramName] = paramValue;
+                }
+            });
+            
+            return params;
+        }
+        
+        // Format JSON for display
+        function formatJSON(obj) {
+            if (typeof obj !== 'object' || obj === null) {
+                return obj;
+            }
+            
+            return JSON.stringify(obj, null, 2)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                    let cls = 'json-number';
+                    if (/^"/.test(match)) {
+                        if (/:$/.test(match)) {
+                            cls = 'json-key';
+                        } else {
+                            cls = 'json-string';
+                        }
+                    } else if (/true|false/.test(match)) {
+                        cls = 'json-boolean';
+                    } else if (/null/.test(match)) {
+                        cls = 'json-null';
+                    }
+                    return '<span class="' + cls + '">' + match + '</span>';
+                });
+        }
+        
+        // Display resource details in modal
+        function showResourceDetails(resource) {
+            resourceDetailViewer.innerHTML = `<pre>${formatJSON(resource)}</pre>`;
+            resourceDetailModal.show();
+        }
+        
+        // Perform FHIR search
+        function performSearch(resourceType, params) {
+            resultsViewer.innerHTML = `
+                <div class="d-flex justify-content-center p-3">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Searching...</span>
+                    </div>
+                </div>
+            `;
+            
+            // Build the query URL
+            const queryParams = new URLSearchParams(params);
+            const url = `/api/fhir/search/${resourceType}?${queryParams.toString()}`;
+            
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(results => {
+                    resultsViewer.innerHTML = `<pre>${formatJSON(results)}</pre>`;
+                    
+                    // Add event listeners to resource entries for viewing details
+                    if (results.entry && Array.isArray(results.entry)) {
+                        const resourceEntries = resultsViewer.querySelectorAll('.json-key');
+                        resourceEntries.forEach(entry => {
+                            if (entry.textContent === '"resource":') {
+                                entry.style.cursor = 'pointer';
+                                entry.title = 'Click to view resource details';
+                                entry.addEventListener('click', function() {
+                                    // Find the resource object in the JSON
+                                    const resourceIndex = Array.from(resourceEntries).indexOf(entry);
+                                    if (resourceIndex !== -1 && resourceIndex < results.entry.length) {
+                                        const resource = results.entry[resourceIndex].resource;
+                                        showResourceDetails(resource);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                })
+                .catch(error => {
+                    resultsViewer.innerHTML = `
+                        <div class="p-3 text-danger">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            Error performing search: ${error.message}
+                        </div>
+                    `;
+                });
+        }
+        
+        // Initialize the explorer
+        loadResourceTypes();
+        
+        // Event listener for resource type change
+        resourceTypeSelect.addEventListener('change', function() {
+            // Clear existing search params
+            dynamicSearchParams.innerHTML = '';
+            
+            // Add default _count parameter for the selected resource type
+            if (this.value) {
+                const paramRow = document.createElement('div');
+                paramRow.className = 'row mb-3 search-param-row';
+                paramRow.innerHTML = `
+                    <div class="col-5">
+                        <input type="text" class="form-control param-name" value="_count" readonly>
+                    </div>
+                    <div class="col-5">
+                        <input type="text" class="form-control param-value" value="10">
+                    </div>
+                    <div class="col-2">
+                        <button type="button" class="btn btn-secondary" disabled>
+                            <i class="fas fa-lock"></i>
+                        </button>
+                    </div>
+                `;
+                dynamicSearchParams.appendChild(paramRow);
+                
+                // Add resource-specific parameters here if needed
+                if (this.value === 'Patient') {
+                    // Add common Patient search params
+                    const nameParam = document.createElement('div');
+                    nameParam.className = 'row mb-3 search-param-row';
+                    nameParam.innerHTML = `
+                        <div class="col-5">
+                            <input type="text" class="form-control param-name" value="name" readonly>
+                        </div>
+                        <div class="col-5">
+                            <input type="text" class="form-control param-value" placeholder="Patient name">
+                        </div>
+                        <div class="col-2">
+                            <button type="button" class="btn btn-danger remove-param">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                    nameParam.querySelector('.remove-param').addEventListener('click', function() {
+                        nameParam.remove();
+                    });
+                    dynamicSearchParams.appendChild(nameParam);
+                }
+            }
+        });
+        
+        // Event listener for add search parameter button
+        addSearchParamBtn.addEventListener('click', addSearchParamField);
+        
+        // Event listener for search form submission
+        searchForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const resourceType = resourceTypeSelect.value;
+            if (!resourceType) {
+                alert('Please select a resource type');
+                return;
+            }
+            
+            const searchParams = getSearchParams();
+            performSearch(resourceType, searchParams);
+        });
+        
+        // Event listener for copy results button
+        copyResultsBtn.addEventListener('click', function() {
+            const resultText = resultsViewer.textContent;
+            navigator.clipboard.writeText(resultText)
+                .then(() => {
+                    // Show a temporary success message
+                    const originalHTML = this.innerHTML;
+                    this.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => {
+                        this.innerHTML = originalHTML;
+                    }, 1500);
+                })
+                .catch(err => {
+                    console.error('Failed to copy results:', err);
+                });
+        });
+        
+        // Check server status on page load
+        fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+                const statusIndicator = document.getElementById('serverStatusIndicator');
+                if (data.fhir_server_configured) {
+                    if (data.fhir_server_connection === 'connected') {
+                        statusIndicator.innerHTML = '<span class="badge bg-success">FHIR Server: Connected</span>';
+                    } else {
+                        statusIndicator.innerHTML = '<span class="badge bg-warning">FHIR Server: Error</span>';
+                    }
+                } else {
+                    statusIndicator.innerHTML = '<span class="badge bg-secondary">FHIR Server: Not Configured</span>';
+                }
+            })
+            .catch(error => {
+                console.error('Error checking server status:', error);
+                document.getElementById('serverStatusIndicator').innerHTML = 
+                    '<span class="badge bg-danger">Server Status: Error</span>';
+            });
+    });
+</script>
+{% endblock %}

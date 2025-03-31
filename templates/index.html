@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}MCP FHIR Server - Home{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h1 class="card-title mb-0">
+                    <i class="fas fa-server me-2"></i>Model Context Protocol (MCP) Server
+                </h1>
+            </div>
+            <div class="card-body">
+                <p class="lead">
+                    This server provides a Model Context Protocol (MCP) interface to interact with FHIR servers.
+                </p>
+                
+                <div class="alert alert-info" role="alert">
+                    <h4 class="alert-heading"><i class="fas fa-info-circle me-2"></i>Overview</h4>
+                    <p>The MCP server enables standardized interaction with FHIR (Fast Healthcare Interoperability Resources) servers, 
+                       providing a unified interface for retrieving and working with healthcare data.</p>
+                </div>
+                
+                <h2 class="mt-4"><i class="fas fa-cogs me-2"></i>Key Features</h2>
+                <ul class="list-group mb-4">
+                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Connect to any FHIR API server</li>
+                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Retrieve FHIR resources with read operations</li>
+                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Search FHIR resources with flexible query parameters</li>
+                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>View FHIR server metadata and capabilities</li>
+                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Comprehensive error handling and logging</li>
+                </ul>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card mb-3">
+                            <div class="card-header bg-secondary">
+                                <h3 class="card-title h5 mb-0"><i class="fas fa-cog me-2"></i>Configuration</h3>
+                            </div>
+                            <div class="card-body">
+                                <p>Configure your FHIR server connection settings to start using the MCP server.</p>
+                                <a href="{{ url_for('settings') }}" class="btn btn-primary">
+                                    <i class="fas fa-cog me-1"></i>Settings
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card mb-3">
+                            <div class="card-header bg-secondary">
+                                <h3 class="card-title h5 mb-0"><i class="fas fa-book me-2"></i>Documentation</h3>
+                            </div>
+                            <div class="card-body">
+                                <p>View detailed documentation on how to use the MCP server API.</p>
+                                <a href="{{ url_for('documentation') }}" class="btn btn-primary">
+                                    <i class="fas fa-book me-1"></i>Documentation
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h2 class="mt-4"><i class="fas fa-tools me-2"></i>Getting Started</h2>
+                <ol class="list-group list-group-numbered mb-4">
+                    <li class="list-group-item">Configure your FHIR server connection in <a href="{{ url_for('settings') }}">Settings</a></li>
+                    <li class="list-group-item">Check the server status to ensure proper connection</li>
+                    <li class="list-group-item">Use the <a href="{{ url_for('fhir_explorer') }}">FHIR Explorer</a> to browse resources</li>
+                    <li class="list-group-item">Integrate with the API using the endpoints described in the <a href="{{ url_for('documentation') }}">Documentation</a></li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

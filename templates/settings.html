@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block title %}MCP FHIR Server - Settings{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">
+        <h1 class="card-title mb-0">
+            <i class="fas fa-cog me-2"></i>FHIR Server Settings
+        </h1>
+    </div>
+    <div class="card-body">
+        <p class="lead">
+            Configure the connection to your FHIR server.
+        </p>
+        
+        <form method="POST" action="{{ url_for('settings') }}" id="fhirSettingsForm">
+            <div class="mb-3">
+                <label for="base_url" class="form-label">FHIR Server Base URL</label>
+                <input type="url" class="form-control" id="base_url" name="base_url" 
+                       placeholder="https://fhir-server.example.com/fhir" 
+                       value="{{ settings.base_url if settings else '' }}" required>
+                <div class="form-text">The base URL of the FHIR server (e.g., https://hapi.fhir.org/baseR4)</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="auth_type" class="form-label">Authentication Type</label>
+                <select class="form-select" id="auth_type" name="auth_type">
+                    <option value="none" {% if settings and settings.auth_type == 'none' %}selected{% endif %}>None</option>
+                    <option value="basic" {% if settings and settings.auth_type == 'basic' %}selected{% endif %}>Basic Authentication</option>
+                    <option value="token" {% if settings and settings.auth_type == 'token' %}selected{% endif %}>Token Authentication</option>
+                </select>
+            </div>
+            
+            <div id="basicAuthFields" class="auth-fields mb-3" style="display: none;">
+                <div class="card card-body bg-light">
+                    <h3 class="h5 mb-3">Basic Authentication</h3>
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username">
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password">
+                    </div>
+                </div>
+            </div>
+            
+            <div id="tokenAuthFields" class="auth-fields mb-3" style="display: none;">
+                <div class="card card-body bg-light">
+                    <h3 class="h5 mb-3">Token Authentication</h3>
+                    <div class="mb-3">
+                        <label for="api_key" class="form-label">API Key / Bearer Token</label>
+                        <input type="text" class="form-control" id="api_key" name="api_key">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save me-1"></i>Save Settings
+                </button>
+                <button type="button" id="testConnection" class="btn btn-secondary">
+                    <i class="fas fa-plug me-1"></i>Test Connection
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal fade" id="connectionTestModal" tabindex="-1" aria-labelledby="connectionTestModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="connectionTestModalLabel">Connection Test Result</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="connectionTestResult">
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border text-primary me-3" role="status">
+                        <span class="visually-hidden">Testing...</span>
+                    </div>
+                    <span>Testing connection to FHIR server...</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const authTypeSelect = document.getElementById('auth_type');
+        const basicAuthFields = document.getElementById('basicAuthFields');
+        const tokenAuthFields = document.getElementById('tokenAuthFields');
+        const testConnectionBtn = document.getElementById('testConnection');
+        const connectionTestModal = new bootstrap.Modal(document.getElementById('connectionTestModal'));
+        
+        // Show/hide auth fields based on selected auth type
+        function updateAuthFields() {
+            const authType = authTypeSelect.value;
+            
+            // Hide all auth fields first
+            basicAuthFields.style.display = 'none';
+            tokenAuthFields.style.display = 'none';
+            
+            // Show the relevant fields based on auth type
+            if (authType === 'basic') {
+                basicAuthFields.style.display = 'block';
+            } else if (authType === 'token') {
+                tokenAuthFields.style.display = 'block';
+            }
+        }
+        
+        // Initialize auth fields based on selected value
+        updateAuthFields();
+        
+        // Update auth fields when auth type changes
+        authTypeSelect.addEventListener('change', updateAuthFields);
+        
+        // Handle test connection button click
+        testConnectionBtn.addEventListener('click', function() {
+            // Show the modal with loading spinner
+            connectionTestModal.show();
+            document.getElementById('connectionTestResult').innerHTML = `
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border text-primary me-3" role="status">
+                        <span class="visually-hidden">Testing...</span>
+                    </div>
+                    <span>Testing connection to FHIR server...</span>
+                </div>
+            `;
+            
+            // Get form data
+            const formData = new FormData(document.getElementById('fhirSettingsForm'));
+            
+            // Create temporary settings and test connection
+            fetch('/api/status', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                let resultHtml;
+                
+                if (data.fhir_server_configured && data.fhir_server_connection === 'connected') {
+                    resultHtml = `
+                        <div class="alert alert-success mb-0">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>Success!</strong> Connected to the FHIR server successfully.
+                        </div>
+                    `;
+                } else {
+                    let errorMessage = data.error_message || 'Unknown error';
+                    resultHtml = `
+                        <div class="alert alert-danger mb-0">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            <strong>Error!</strong> Could not connect to the FHIR server.
+                            <hr>
+                            <p class="mb-0">Error details: ${errorMessage}</p>
+                        </div>
+                    `;
+                }
+                
+                document.getElementById('connectionTestResult').innerHTML = resultHtml;
+            })
+            .catch(error => {
+                const resultHtml = `
+                    <div class="alert alert-danger mb-0">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        <strong>Error!</strong> An unexpected error occurred while testing the connection.
+                        <hr>
+                        <p class="mb-0">Error details: ${error.message}</p>
+                    </div>
+                `;
+                document.getElementById('connectionTestResult').innerHTML = resultHtml;
+            });
+        });
+    });
+</script>
+{% endblock %}
