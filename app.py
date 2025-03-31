@@ -391,6 +391,9 @@ def search_fhir_resources(resource_type):
     start_time = time.time()
     
     try:
+        # Add debug logging for the parameters
+        logger.debug(f"Searching for {resource_type} with parameters: {params}")
+        
         results = fhir_client.search_resources(resource_type, params)
         
         # Update log with success
@@ -401,16 +404,38 @@ def search_fhir_resources(resource_type):
         
         return jsonify(results)
     except Exception as e:
-        logger.error(f"Error searching for {resource_type} resources: {str(e)}")
+        error_message = str(e)
+        logger.error(f"Error searching for {resource_type} resources: {error_message}")
         
-        # Update log with error
-        log_entry.response_status = 500
-        log_entry.error_message = str(e)
-        log_entry.execution_time_ms = (time.time() - start_time) * 1000
-        db.session.add(log_entry)
-        db.session.commit()
-        
-        return jsonify({'error': str(e)}), 500
+        # Try to determine if this was due to invalid search parameters
+        if "search parameter" in error_message.lower() and "not supported" in error_message.lower():
+            # Extract the invalid parameter if possible
+            import re
+            param_match = re.search(r"parameter\s+'([^']+)'", error_message)
+            
+            invalid_param = param_match.group(1) if param_match else "unknown"
+            friendly_error = f"The search parameter '{invalid_param}' is not supported by the FHIR server. Please use only standard FHIR R4 parameters."
+            
+            # Update log with a 400 error for invalid parameters
+            log_entry.response_status = 400
+            log_entry.error_message = friendly_error
+            log_entry.execution_time_ms = (time.time() - start_time) * 1000
+            db.session.add(log_entry)
+            db.session.commit()
+            
+            return jsonify({
+                'error': friendly_error,
+                'details': error_message
+            }), 400
+        else:
+            # Update log with a 500 error for other issues
+            log_entry.response_status = 500
+            log_entry.error_message = error_message
+            log_entry.execution_time_ms = (time.time() - start_time) * 1000
+            db.session.add(log_entry)
+            db.session.commit()
+            
+            return jsonify({'error': error_message}), 500
 
 @app.route('/api/fhir/metadata', methods=['GET'])
 def fhir_metadata():

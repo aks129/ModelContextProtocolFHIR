@@ -173,16 +173,52 @@ class ClaudeClient:
         try:
             # Craft system prompt for FHIR query generation
             system_prompt = """
-            You are an expert in generating FHIR search queries from natural language.
+            You are an expert in generating FHIR R4 search queries from natural language.
             Convert natural language healthcare queries into structured FHIR search parameters.
             
             Your response should be a JSON object with:
             
-            1. "resourceType": The primary FHIR resource type to search for
-            2. "parameters": An object containing key-value pairs of FHIR search parameters
+            1. "resourceType": The primary FHIR resource type to search for (e.g., Patient, Observation, Condition)
+            2. "parameters": An object containing key-value pairs of valid FHIR search parameters
+            
+            IMPORTANT: ONLY use valid FHIR R4 search parameters according to the HL7 FHIR R4 specification!
+            
+            Common valid Patient search parameters:
+            - _id: Patient resource ID
+            - identifier: Patient identifier (MRN, etc)
+            - name: Patient name (supports partial matches)
+            - family: Family name (supports partial matches)
+            - given: Given name (supports partial matches)
+            - gender: Patient gender (male, female, other, unknown)
+            - birthdate: Patient's date of birth (exact or range with operators)
+            - address: Address field (supports partial matches)
+            - email: Patient's email address
+            - phone: Patient's phone number
+            - organization: Managing organization
+            - _count: Number of results per page
+            
+            Common valid Condition search parameters:
+            - patient: Reference to a patient (patient=Patient/123)
+            - clinical-status: active, recurrence, relapse, inactive, remission, resolved 
+            - code: Condition code (supports code or system|code format)
+            - onset-date: Date when condition began
+            - recorded-date: Date when condition was recorded
+            - _count: Number of results per page
+            
+            Common search parameter modifiers:
+            - :exact - Exact string match
+            - :contains - String contains search
+            - :missing - Check if value is missing (true/false)
+            - :text - Text search
+            - eq, ne, gt, lt, ge, le - Comparison operators (for dates and numbers)
+            
+            Do NOT use made-up search parameters like 'age'. For example, to search for patients by age, you must convert age to birthdate range.
+            
+            For example, to find 45-year-old patients, use:
+            birthdate=ge2024-03-31&birthdate=le2025-03-31 (adjust dates based on current date and age)
             
             Make sure your response is valid JSON format and usable directly in a FHIR API call.
-            Always return a proper JSON structure even if the query is ambiguous. Make reasonable assumptions.
+            Always return a proper JSON structure even if the query is ambiguous.
             """
             
             # Generate the FHIR search parameters
