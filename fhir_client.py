@@ -108,40 +108,88 @@ class FHIRClient:
         if not self.is_configured():
             raise ValueError("FHIR client not configured with a base URL")
         
-        try:
-            # First try with just the base URL
+        if not self.base_url:
+            raise ValueError("Base URL is required")
+        
+        # Validate the URL format
+        if not self.base_url.startswith('http://') and not self.base_url.startswith('https://'):
+            raise ValueError("Base URL must start with http:// or https://")
+        
+        # Force HTTPS for security
+        base_url = self.base_url
+        if base_url.startswith('http://'):
+            base_url = 'https://' + base_url[7:]
+            logger.warning(f"Converting HTTP URL to HTTPS: {self.base_url} -> {base_url}")
+            
+        # Endpoints to try in order
+        endpoints = [
+            '',  # Base URL itself
+            'metadata',  # Standard FHIR metadata endpoint
+            'Metadata',  # Some servers use capitalized endpoint
+            'fhir/metadata',  # Some servers have a /fhir prefix
+            '.well-known/smart-configuration'  # SMART on FHIR configuration endpoint
+        ]
+        
+        last_exception = None
+        
+        for endpoint in endpoints:
             try:
+                url = base_url
+                if endpoint:
+                    url = url.rstrip('/') + '/' + endpoint
+                
+                logger.debug(f"Testing connection to: {url}")
+                
                 response = requests.get(
-                    self.base_url,
+                    url,
                     headers=self.headers,
                     auth=self.auth,
-                    timeout=10
-                )
-                response.raise_for_status()
-                return True
-            except requests.exceptions.RequestException:
-                # If base URL fails, try with metadata endpoint
-                url = urljoin(self.base_url, 'metadata')
-                response = requests.get(
-                    url, 
-                    headers=self.headers,
-                    auth=self.auth,
-                    timeout=10
+                    timeout=10,
+                    verify=True  # Always verify SSL certificates for security
                 )
                 
-                response.raise_for_status()
-                return True
-        except requests.exceptions.RequestException as e:
-            logger.error(f"FHIR server connection test failed: {str(e)}")
-            
-            # Special case for HAPI FHIR server - check if base_url contains hapi.fhir.org
-            # Only do this check if base_url is not None
-            if self.base_url is not None:
-                # Special case for HAPI FHIR server
-                if 'hapi.fhir.org' in self.base_url and '/baseR4' not in self.base_url:
-                    raise Exception(f"Connection failed. For HAPI FHIR, please include '/baseR4' in the URL. Try 'hapi.fhir.org/baseR4'")
-            
-            raise Exception(f"Connection test failed: {str(e)}")
+                # If we got a successful response, the connection works
+                if response.status_code < 400:
+                    logger.debug(f"Connection successful using endpoint: {endpoint or 'base URL'}")
+                    return True
+                
+                # If we got a 404 for this endpoint, continue to the next one
+                if response.status_code == 404:
+                    continue
+                
+                # For other error codes (401, 403, 500, etc.), we consider it a valid FHIR server 
+                # but with auth/permission issues that need to be addressed
+                if response.status_code >= 400:
+                    if response.status_code in (401, 403):
+                        raise Exception(f"Authentication or authorization error (HTTP {response.status_code}). Please check your credentials.")
+                    else:
+                        raise Exception(f"Server error (HTTP {response.status_code}). The server is responding but returned an error.")
+                    
+            except requests.exceptions.SSLError as e:
+                last_exception = Exception("SSL Certificate error. Please check the FHIR server's SSL certificate.")
+            except requests.exceptions.ConnectionError as e:
+                last_exception = Exception(f"Connection error: Could not connect to the server. Please check the URL and network connection.")
+            except requests.exceptions.Timeout as e:
+                last_exception = Exception("Connection timed out. The server took too long to respond.")
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+        
+        # If we've tried all endpoints and none worked, process special cases and raise the appropriate error
+        
+        # Special case for HAPI FHIR server
+        if self.base_url and 'hapi.fhir.org' in self.base_url:
+            if '/baseR4' not in self.base_url:
+                raise Exception(f"Connection failed. For HAPI FHIR servers, please include '/baseR4' in the URL. Try 'https://hapi.fhir.org/baseR4'")
+        
+        # Special case for Azure Health Data Services FHIR
+        if self.base_url and ('azurehealthcareapis.com' in self.base_url or 'fhir.azurehealthcareapis.com' in self.base_url):
+            raise Exception(f"Connection failed. For Azure Health Data Services FHIR, ensure you're using the full service URL including the FHIR service name and correct authentication.")
+        
+        # Generic error message if no specific case applied
+        if last_exception:
+            raise Exception(f"Connection test failed: {str(last_exception)}")
+        else:
+            raise Exception("Connection failed. The server did not respond to any known FHIR endpoints.")
     
     def get_metadata(self):
         """

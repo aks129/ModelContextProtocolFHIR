@@ -9,16 +9,28 @@ class FHIRServerSchema(Schema):
     username = fields.String(required=False)
     password = fields.String(required=False)
     name = fields.String(required=False)
+    is_default = fields.Boolean(required=False)
+    config_id = fields.Integer(required=False)
     
     @validates('auth_type')
     def validate_auth_credentials(self, auth_type):
         """Validate that the necessary credentials are provided for the chosen auth type."""
+        # Skip validation for test-connection endpoint
+        if self.context.get('skip_auth_validation'):
+            return
+            
+        data = self.context.get('data', {})
+        
         if auth_type == 'basic':
-            if not self.context.get('username') or not self.context.get('password'):
+            username = data.get('username')
+            password = data.get('password')
+            if not username or not password:
                 raise ValidationError("Username and password are required for basic authentication")
         
-        if auth_type == 'token' and not self.context.get('api_key'):
-            raise ValidationError("API key is required for token authentication")
+        if auth_type == 'token':
+            api_key = data.get('api_key')
+            if not api_key:
+                raise ValidationError("API key is required for token authentication")
 
 class FHIRResourceRequestSchema(Schema):
     """Schema for validating FHIR resource requests."""

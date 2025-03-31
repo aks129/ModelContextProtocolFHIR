@@ -53,18 +53,29 @@ def settings():
     
     if request.method == 'POST':
         try:
+            # Get the form data
+            form_data = request.form.to_dict()
+            
+            # Create context for validation
+            auth_type = form_data.get('auth_type')
+            validation_context = {
+                'data': form_data,
+                'skip_auth_validation': False
+            }
+            
             # Validate the incoming data
-            data = fhir_server_schema.load(request.form)
+            fhir_server_schema = FHIRServerSchema(context=validation_context)
+            data = fhir_server_schema.load(form_data)
             
             # If "set_as_default" is checked, unset the current default first
-            set_as_default = request.form.get('set_as_default') == 'on'
+            set_as_default = form_data.get('set_as_default') == 'on'
             
             if set_as_default:
                 db.session.query(FHIRServerConfig).filter_by(is_default=True).update({"is_default": False})
                 db.session.commit()
             
             # Check if we're updating an existing configuration
-            config_id = request.form.get('config_id')
+            config_id = form_data.get('config_id')
             
             if config_id and config_id.isdigit():
                 # Updating existing configuration
@@ -117,6 +128,7 @@ def settings():
             return redirect(url_for('settings'))
             
         except ValidationError as err:
+            logger.error(f"Validation error: {err.messages}")
             flash(f'Invalid settings: {err.messages}', 'danger')
         except Exception as e:
             logger.error(f"Error saving FHIR server configuration: {str(e)}")
@@ -163,11 +175,23 @@ def test_connection():
                 'error_message': 'Base URL is required'
             }), 400
         
+        # Validate the settings without strict auth validation
+        # We only check the URL format here since we're just testing
+        fhir_server_schema = FHIRServerSchema(context={'skip_auth_validation': True, 'data': settings})
+        try:
+            validated_data = fhir_server_schema.load(settings)
+        except ValidationError as err:
+            return jsonify({
+                'fhir_server_configured': False,
+                'fhir_server_connection': 'error',
+                'error_message': str(err.messages)
+            }), 400
+        
         # Create a temporary FHIR client for testing
         temp_client = FHIRClient(
-            base_url=settings.get('base_url'),
-            auth_type=settings.get('auth_type'),
-            api_key=settings.get('api_key'),
+            base_url=validated_data.get('base_url'),
+            auth_type=validated_data.get('auth_type'),
+            api_key=settings.get('api_key'),  # Use original settings for credentials
             username=settings.get('username'),
             password=settings.get('password')
         )
