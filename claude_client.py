@@ -184,9 +184,10 @@ class ClaudeClient:
             IMPORTANT RULES:
             1. ONLY use valid FHIR R4 search parameters according to the HL7 FHIR R4 specification
             2. DO NOT use complex syntax in parameter values (no & or | characters)
-            3. For searching diseases like diabetes, use code=http://snomed.info/sct|73211009
+            3. For searching diseases like diabetes, use code=diabetes (simple value only)
             4. Generate ONE parameter at a time - each key-value pair should be simple
             5. Never create parameter names that don't exist in the FHIR spec
+            6. ALWAYS include code parameter when searching for conditions by diagnosis
             
             Common valid Patient search parameters:
             - _id: Patient resource ID
@@ -302,6 +303,28 @@ class ClaudeClient:
                     # Ensure no empty parameter values
                     if param_value.strip():
                         cleaned_params[param_name] = param_value
+                
+                # Special handling for searches about conditions (especially diabetes)
+                if result["resourceType"] == "Condition":
+                    # For diabetes searches
+                    if "diabetes" in natural_language_query.lower() and "code" not in cleaned_params:
+                        logger.debug("Adding missing code=diabetes parameter for diabetes search")
+                        cleaned_params["code"] = "diabetes"
+                    # For any other medical condition searches
+                    elif "code" not in cleaned_params:
+                        # Extract potential condition from the query
+                        for disease in ["hypertension", "asthma", "cancer", "heart disease", 
+                                       "copd", "depression", "arthritis", "alzheimer"]:
+                            if disease in natural_language_query.lower():
+                                logger.debug(f"Adding missing code={disease} parameter")
+                                cleaned_params["code"] = disease
+                                break
+                
+                # If asking about "how many patients" but searching Condition resource
+                if "how many patient" in natural_language_query.lower() and result["resourceType"] == "Condition":
+                    # Add a parameter to group by patient
+                    logger.debug("Adding _summary=count parameter for counting patients with conditions")
+                    cleaned_params["_summary"] = "count"
                 
                 # Replace the parameters with sanitized ones
                 result["parameters"] = cleaned_params
