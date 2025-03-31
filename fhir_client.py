@@ -109,20 +109,38 @@ class FHIRClient:
             raise ValueError("FHIR client not configured with a base URL")
         
         try:
-            # Try to get the metadata, which is a better test than the base URL
-            # as some servers return errors on the base URL
-            url = urljoin(self.base_url, 'metadata')
-            response = requests.get(
-                url, 
-                headers=self.headers,
-                auth=self.auth,
-                timeout=10
-            )
-            
-            response.raise_for_status()
-            return True
+            # First try with just the base URL
+            try:
+                response = requests.get(
+                    self.base_url,
+                    headers=self.headers,
+                    auth=self.auth,
+                    timeout=10
+                )
+                response.raise_for_status()
+                return True
+            except requests.exceptions.RequestException:
+                # If base URL fails, try with metadata endpoint
+                url = urljoin(self.base_url, 'metadata')
+                response = requests.get(
+                    url, 
+                    headers=self.headers,
+                    auth=self.auth,
+                    timeout=10
+                )
+                
+                response.raise_for_status()
+                return True
         except requests.exceptions.RequestException as e:
             logger.error(f"FHIR server connection test failed: {str(e)}")
+            
+            # Special case for HAPI FHIR server - check if base_url contains hapi.fhir.org
+            # Only do this check if base_url is not None
+            if self.base_url is not None:
+                # Special case for HAPI FHIR server
+                if 'hapi.fhir.org' in self.base_url and '/baseR4' not in self.base_url:
+                    raise Exception(f"Connection failed. For HAPI FHIR, please include '/baseR4' in the URL. Try 'hapi.fhir.org/baseR4'")
+            
             raise Exception(f"Connection test failed: {str(e)}")
     
     def get_metadata(self):
@@ -137,8 +155,12 @@ class FHIRClient:
         """
         if not self.is_configured():
             raise ValueError("FHIR client not configured with a base URL")
+            
+        # At this point, we know self.base_url is not None due to the is_configured check
+        # but we'll still be defensive with our handling
         
         try:
+            # Try standard metadata endpoint
             url = urljoin(self.base_url, 'metadata')
             response = requests.get(
                 url, 
@@ -147,10 +169,34 @@ class FHIRClient:
                 timeout=10
             )
             
+            # If that fails, try appending /metadata to the base URL directly
+            # This handles cases where the base URL already includes the FHIR version path
+            if response.status_code == 404:
+                # Safely check if base_url ends with /
+                alternate_url = None
+                if self.base_url:  # Additional null check
+                    if not self.base_url.endswith('/'):
+                        alternate_url = f"{self.base_url}/metadata"
+                    else:
+                        alternate_url = f"{self.base_url}metadata"
+                        
+                if alternate_url:  # Only try if we have a valid URL
+                    response = requests.get(
+                        alternate_url,
+                        headers=self.headers,
+                        auth=self.auth,
+                        timeout=10
+                    )
+            
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching FHIR metadata: {str(e)}")
+            
+            # Special case for HAPI FHIR server
+            if self.base_url and 'hapi.fhir.org' in self.base_url and '/baseR4' not in self.base_url:
+                raise Exception(f"Metadata request failed. For HAPI FHIR, please include '/baseR4' in the URL. Try 'hapi.fhir.org/baseR4'")
+                
             raise Exception(f"Metadata request failed: {str(e)}")
     
     def read_resource(self, resource_type, resource_id):
@@ -170,6 +216,8 @@ class FHIRClient:
         if not self.is_configured():
             raise ValueError("FHIR client not configured with a base URL")
         
+        response = None  # Initialize response to avoid 'possibly unbound' error
+        
         try:
             url = urljoin(self.base_url, f'{resource_type}/{resource_id}')
             response = requests.get(
@@ -183,7 +231,7 @@ class FHIRClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error reading {resource_type}/{resource_id}: {str(e)}")
-            if response.status_code == 404:
+            if response and response.status_code == 404:
                 raise Exception(f"Resource {resource_type}/{resource_id} not found")
             raise Exception(f"Resource read failed: {str(e)}")
     
@@ -205,8 +253,10 @@ class FHIRClient:
             raise ValueError("FHIR client not configured with a base URL")
         
         params = params or {}
+        response = None
         
         try:
+            # Handle the special case for HAPI FHIR server
             url = urljoin(self.base_url, resource_type)
             response = requests.get(
                 url, 
@@ -216,8 +266,15 @@ class FHIRClient:
                 timeout=10
             )
             
+            # Special handling for HAPI FHIR server if needed
+            if response.status_code == 404 and self.base_url and 'hapi.fhir.org' in self.base_url:
+                if '/baseR4' not in self.base_url:
+                    raise Exception(f"Resource search failed. For HAPI FHIR, please include '/baseR4' in the base URL. Try 'hapi.fhir.org/baseR4'")
+            
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error searching for {resource_type} resources: {str(e)}")
+            if response and response.status_code == 404:
+                raise Exception(f"Resource type {resource_type} not found or not supported by this server")
             raise Exception(f"Resource search failed: {str(e)}")
