@@ -2,7 +2,9 @@ import os
 import json
 import logging
 import anthropic
+import datetime
 from anthropic import Anthropic
+from typing import Dict, List, Any, Optional, Union
 
 logger = logging.getLogger('claude_client')
 
@@ -10,7 +12,11 @@ class ClaudeClient:
     """
     Client for interacting with Claude AI.
     Provides methods for generating responses based on FHIR data.
+    Implements Anthropic's Model Context Protocol (MCP) for structured interactions.
     """
+    
+    # MCP version
+    MCP_VERSION = "1.0"
     
     def __init__(self):
         """Initialize the Claude client with API key from environment variables."""
@@ -41,8 +47,43 @@ class ClaudeClient:
     def is_configured(self):
         """Check if the client is configured with an API key and initialized."""
         return self.client is not None
+    
+    def _create_context_object(self, context_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a Model Context Protocol (MCP) context object.
         
-    def generate_response(self, prompt, model="claude-3-haiku-20240307", max_tokens=1000, system_prompt=None):
+        Args:
+            context_type (str): Type of context (e.g., "fhir_resource", "search_query")
+            content (dict): Content specific to the context type
+            
+        Returns:
+            dict: MCP-formatted context object
+        """
+        return {
+            "@type": context_type,
+            "@timestamp": datetime.datetime.utcnow().isoformat(),
+            "@version": self.MCP_VERSION,
+            "content": content
+        }
+    
+    def _create_inspection_object(self, inspector_output: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a Model Context Protocol (MCP) inspection object for enhanced UI output.
+        
+        Args:
+            inspector_output (dict): Output from the inspector model
+            
+        Returns:
+            dict: MCP-formatted inspection object
+        """
+        return {
+            "@type": "mcp.inspection",
+            "@timestamp": datetime.datetime.utcnow().isoformat(),
+            "@version": self.MCP_VERSION,
+            "output": inspector_output
+        }
+        
+    def generate_response(self, prompt, model="claude-3-haiku-20240307", max_tokens=1000, system_prompt=None, inspector_mode=False):
         """
         Generate a response from Claude based on a prompt.
         
@@ -51,9 +92,11 @@ class ClaudeClient:
             model (str): Claude model to use (default: claude-3-haiku-20240307)
             max_tokens (int): Maximum tokens in the response
             system_prompt (str): Optional system prompt
+            inspector_mode (bool): Enable inspector mode for detailed model outputs
             
         Returns:
-            str: The generated response
+            dict: The generated response with MCP metadata (if inspector_mode=True)
+            str: Just the response text (if inspector_mode=False)
             
         Raises:
             Exception: If request fails
@@ -80,23 +123,47 @@ class ClaudeClient:
             response = self.client.messages.create(**message_params)
             
             # Extract the content from the response
-            return response.content[0].text
+            response_text = response.content[0].text
             
+            # If inspector mode is enabled, return a structured response with MCP metadata
+            if inspector_mode:
+                # Create an inspection object with additional metadata
+                inspection = self._create_inspection_object({
+                    "model": model,
+                    "usage": {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens
+                    },
+                    "stop_reason": response.stop_reason,
+                    "stop_sequence": response.stop_sequence
+                })
+                
+                return {
+                    "text": response_text,
+                    "inspection": inspection
+                }
+            else:
+                # Return just the text for backward compatibility
+                return response_text
+                
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             raise Exception(f"Failed to generate response: {str(e)}")
     
-    def analyze_fhir_resource(self, resource, model="claude-3-haiku-20240307", max_tokens=1500):
+    def analyze_fhir_resource(self, resource, model="claude-3-haiku-20240307", max_tokens=1500, inspector_mode=False):
         """
         Analyze a FHIR resource and generate insights.
+        Implements Model Context Protocol (MCP) for structured interaction.
         
         Args:
             resource (dict): The FHIR resource to analyze
             model (str): Claude model to use
             max_tokens (int): Maximum tokens in the response
+            inspector_mode (bool): Enable inspector mode for detailed model outputs
             
         Returns:
-            str: Analysis of the FHIR resource
+            dict: Analysis with MCP metadata (if inspector_mode=True)
+            str: Just the analysis text (if inspector_mode=False)
             
         Raises:
             Exception: If request fails
@@ -108,10 +175,18 @@ class ClaudeClient:
             # Format the resource as a pretty JSON string
             resource_json = json.dumps(resource, indent=2)
             
-            # Craft system prompt for FHIR resource analysis
+            # Create a MCP context object for the FHIR resource
+            fhir_context = self._create_context_object("mcp.fhir_resource", {
+                "resource_type": resource.get("resourceType", "Unknown"),
+                "id": resource.get("id", "Unknown"),
+                "data": resource
+            })
+            
+            # Craft system prompt for FHIR resource analysis with MCP awareness
             system_prompt = """
             You are an expert in FHIR (Fast Healthcare Interoperability Resources) analysis.
-            Your task is to analyze a FHIR resource and provide insights.
+            You are participating in a Model Context Protocol (MCP) interaction.
+            Your task is to analyze a FHIR resource and provide structured insights.
             
             For each resource:
             1. Identify the resource type and key information
@@ -140,29 +215,60 @@ class ClaudeClient:
                 "messages": [
                     {"role": "user", "content": user_prompt}
                 ],
-                "system": system_prompt
+                "system": system_prompt,
+                "metadata": {
+                    "mcp_context": json.dumps(fhir_context)
+                }
             }
             
             response = self.client.messages.create(**message_params)
             
             # Extract the content from the response
-            return response.content[0].text
+            response_text = response.content[0].text
+            
+            # If inspector mode is enabled, return a structured response with MCP metadata
+            if inspector_mode:
+                # Create an inspection object
+                inspection = self._create_inspection_object({
+                    "model": model,
+                    "usage": {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens
+                    },
+                    "stop_reason": response.stop_reason,
+                    "resource_analysis": {
+                        "resource_type": resource.get("resourceType", "Unknown"),
+                        "analysis_timestamp": datetime.datetime.utcnow().isoformat()
+                    }
+                })
+                
+                return {
+                    "text": response_text,
+                    "inspection": inspection,
+                    "context": fhir_context
+                }
+            else:
+                # Return just the text for backward compatibility
+                return response_text
                 
         except Exception as e:
             logger.error(f"Error analyzing FHIR resource: {str(e)}")
             raise Exception(f"Failed to analyze FHIR resource: {str(e)}")
     
-    def generate_fhir_query(self, natural_language_query, model="claude-3-haiku-20240307", max_tokens=500):
+    def generate_fhir_query(self, natural_language_query, model="claude-3-haiku-20240307", max_tokens=500, inspector_mode=False):
         """
         Generate FHIR search parameters based on a natural language query.
+        Implements Model Context Protocol (MCP) for structured interaction.
         
         Args:
             natural_language_query (str): The natural language query to convert to FHIR search
             model (str): Claude model to use
             max_tokens (int): Maximum tokens in the response
+            inspector_mode (bool): Enable inspector mode for detailed model outputs
             
         Returns:
-            dict: Dictionary of FHIR search parameters
+            dict: FHIR search parameters with MCP metadata (if inspector_mode=True)
+            dict: Just the search parameters structure (if inspector_mode=False)
             
         Raises:
             Exception: If request fails
@@ -171,9 +277,17 @@ class ClaudeClient:
             raise Exception("Claude client not configured. API key may be missing.")
             
         try:
-            # Craft system prompt for FHIR query generation
+            # Create MCP context object for the natural language query
+            query_context = self._create_context_object("mcp.fhir_query_request", {
+                "query": natural_language_query,
+                "query_type": "natural_language",
+                "target_models": ["FHIR R4"]
+            })
+            
+            # Craft system prompt for FHIR query generation with MCP awareness
             system_prompt = """
             You are an expert in generating FHIR R4 search queries from natural language.
+            You are participating in a Model Context Protocol (MCP) interaction.
             Convert natural language healthcare queries into structured FHIR search parameters.
             
             Your response should be a JSON object with:
@@ -247,7 +361,10 @@ class ClaudeClient:
                 "messages": [
                     {"role": "user", "content": natural_language_query}
                 ],
-                "system": system_prompt
+                "system": system_prompt,
+                "metadata": {
+                    "mcp_context": json.dumps(query_context)
+                }
             }
             
             response = self.client.messages.create(**message_params)
@@ -354,17 +471,177 @@ class ClaudeClient:
                 if "_count" not in result["parameters"]:
                     result["parameters"]["_count"] = "50"
                 
-                return result
+                # If inspector mode is enabled, add MCP metadata
+                if inspector_mode:
+                    # Create an inspection object
+                    inspection = self._create_inspection_object({
+                        "model": model,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens
+                        },
+                        "stop_reason": response.stop_reason,
+                        "query_analysis": {
+                            "resource_type": result.get("resourceType", "Unknown"),
+                            "parameter_count": len(result.get("parameters", {})),
+                            "analysis_timestamp": datetime.datetime.utcnow().isoformat()
+                        }
+                    })
+                    
+                    # Return the result with MCP metadata
+                    return {
+                        "fhir_query": result,
+                        "inspection": inspection,
+                        "context": query_context
+                    }
+                else:
+                    # Return just the result for backward compatibility
+                    return result
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse Claude response as JSON: {e}. Response: {cleaned_response}")
                 # If parsing fails, return a default structure
-                return {
+                error_result = {
                     "resourceType": "Patient",
                     "parameters": {},
                     "error": f"Failed to parse response: {str(e)}"
                 }
                 
+                # If inspector mode is enabled, add MCP metadata
+                if inspector_mode:
+                    # Create an inspection object for the error
+                    inspection = self._create_inspection_object({
+                        "model": model,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens
+                        },
+                        "error": str(e),
+                        "error_type": "JSONDecodeError",
+                        "error_timestamp": datetime.datetime.utcnow().isoformat()
+                    })
+                    
+                    # Return the error with MCP metadata
+                    return {
+                        "fhir_query": error_result,
+                        "inspection": inspection,
+                        "context": query_context
+                    }
+                else:
+                    # Return just the error result for backward compatibility
+                    return error_result
+                
         except Exception as e:
             logger.error(f"Error generating FHIR query: {str(e)}")
             raise Exception(f"Failed to generate FHIR query: {str(e)}")
+            
+    def analyze_search_results(self, search_results, query=None, model="claude-3-haiku-20240307", max_tokens=1500, inspector_mode=False):
+        """
+        Analyze FHIR search results with Claude AI.
+        Implements Model Context Protocol (MCP) for structured interaction.
+        
+        Args:
+            search_results (dict): The FHIR search results bundle to analyze
+            query (str): Optional original query that generated these results
+            model (str): Claude model to use
+            max_tokens (int): Maximum tokens in the response
+            inspector_mode (bool): Enable inspector mode for detailed model outputs
+            
+        Returns:
+            dict: Analysis with MCP metadata (if inspector_mode=True)
+            str: Just the analysis text (if inspector_mode=False)
+            
+        Raises:
+            Exception: If request fails
+        """
+        if not self.is_configured():
+            raise Exception("Claude client not configured. API key may be missing.")
+            
+        try:
+            # Format the search results as a pretty JSON string
+            search_results_json = json.dumps(search_results, indent=2)
+            
+            # Create a MCP context object for the search results
+            search_context = self._create_context_object("mcp.fhir_search_results", {
+                "resource_type": search_results.get("resourceType", "Bundle"),
+                "total": search_results.get("total", 0),
+                "entry_count": len(search_results.get("entry", [])),
+                "original_query": query
+            })
+            
+            # Craft system prompt for FHIR search results analysis with MCP awareness
+            system_prompt = """
+            You are an expert in FHIR (Fast Healthcare Interoperability Resources) analysis.
+            You are participating in a Model Context Protocol (MCP) interaction.
+            Your task is to analyze a FHIR search results bundle and provide structured insights.
+            
+            For the search results:
+            1. Summarize the total number of results and their types
+            2. Highlight key patterns or trends in the data
+            3. Note any missing or potentially inconsistent elements
+            4. Suggest further queries that might be useful based on these results
+            
+            Structure your response in clear sections, using bullet points where appropriate.
+            """
+            
+            # Add original query information if provided
+            user_prompt = "Please analyze the following FHIR search results"
+            if query:
+                user_prompt += f" for the query: '{query}'"
+            
+            user_prompt += f"""
+
+            ```json
+            {search_results_json}
+            ```
+            
+            What insights can you provide about these search results?
+            """
+            
+            # Generate the analysis
+            message_params = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ],
+                "system": system_prompt,
+                "metadata": {
+                    "mcp_context": json.dumps(search_context)
+                }
+            }
+            
+            response = self.client.messages.create(**message_params)
+            
+            # Extract the content from the response
+            response_text = response.content[0].text
+            
+            # If inspector mode is enabled, return a structured response with MCP metadata
+            if inspector_mode:
+                # Create an inspection object
+                inspection = self._create_inspection_object({
+                    "model": model,
+                    "usage": {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens
+                    },
+                    "stop_reason": response.stop_reason,
+                    "results_analysis": {
+                        "total_results": search_results.get("total", 0),
+                        "entry_count": len(search_results.get("entry", [])),
+                        "analysis_timestamp": datetime.datetime.utcnow().isoformat()
+                    }
+                })
+                
+                return {
+                    "text": response_text,
+                    "inspection": inspection,
+                    "context": search_context
+                }
+            else:
+                # Return just the text for backward compatibility
+                return response_text
+                
+        except Exception as e:
+            logger.error(f"Error analyzing search results: {str(e)}")
+            raise Exception(f"Failed to analyze search results: {str(e)}")

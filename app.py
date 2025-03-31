@@ -786,6 +786,7 @@ def analyze_resource():
     Analyze a FHIR resource with Claude AI.
     
     This endpoint takes a FHIR resource as input and returns an analysis of the resource.
+    Supports Model Context Protocol (MCP) with inspector_mode for detailed model outputs.
     """
     if not fhir_client.is_configured():
         return jsonify({'error': 'FHIR server not configured'}), 400
@@ -801,12 +802,29 @@ def analyze_resource():
         if not data or 'resource' not in data:
             return jsonify({'error': 'No resource provided'}), 400
         
-        # Generate analysis of the FHIR resource
-        analysis = claude_client.analyze_fhir_resource(data['resource'])
+        # Check if inspector mode is enabled
+        inspector_mode = data.get('inspector_mode', False)
         
-        return jsonify({
-            'analysis': analysis,
-        })
+        # Generate analysis of the FHIR resource
+        analysis = claude_client.analyze_fhir_resource(
+            resource=data['resource'],
+            model=data.get('model', 'claude-3-haiku-20240307'),
+            max_tokens=data.get('max_tokens', 1500),
+            inspector_mode=inspector_mode
+        )
+        
+        if inspector_mode:
+            # Return the full MCP response with inspection data
+            return jsonify({
+                'analysis': analysis.get('text', ''),
+                'inspection': analysis.get('inspection', {}),
+                'context': analysis.get('context', {})
+            })
+        else:
+            # Return the simple analysis text for backward compatibility
+            return jsonify({
+                'analysis': analysis,
+            })
     except Exception as e:
         logger.error(f"Error analyzing resource: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -817,6 +835,7 @@ def generate_query():
     Generate FHIR search parameters from a natural language query.
     
     This endpoint takes a natural language query and returns FHIR search parameters.
+    Supports Model Context Protocol (MCP) with inspector_mode for detailed model outputs.
     """
     if not fhir_client.is_configured():
         return jsonify({'error': 'FHIR server not configured'}), 400
@@ -832,16 +851,37 @@ def generate_query():
         if not data or 'query' not in data:
             return jsonify({'error': 'No query provided'}), 400
         
+        # Check if inspector mode is enabled
+        inspector_mode = data.get('inspector_mode', False)
+        
         # Log the incoming query for debugging
         logger.debug(f"Generating FHIR query from natural language: {data['query']}")
         
         # Generate FHIR query parameters from natural language
-        query_params = claude_client.generate_fhir_query(data['query'])
+        query_result = claude_client.generate_fhir_query(
+            natural_language_query=data['query'],
+            model=data.get('model', 'claude-3-haiku-20240307'),
+            max_tokens=data.get('max_tokens', 500),
+            inspector_mode=inspector_mode
+        )
         
-        # Log the generated parameters
-        logger.debug(f"Generated FHIR query parameters: {json.dumps(query_params)}")
-        
-        return jsonify(query_params)
+        if inspector_mode:
+            # Log the generated parameters (basic info only)
+            if 'fhir_query' in query_result and 'resourceType' in query_result['fhir_query']:
+                logger.debug(f"Generated FHIR query for {query_result['fhir_query']['resourceType']} with {len(query_result['fhir_query'].get('parameters', {}))} parameters")
+            
+            # Return the full MCP response with inspection data
+            return jsonify({
+                'fhir_query': query_result.get('fhir_query', {}),
+                'inspection': query_result.get('inspection', {}),
+                'context': query_result.get('context', {})
+            })
+        else:
+            # Log the generated parameters in detail (for backward compatibility)
+            logger.debug(f"Generated FHIR query parameters: {json.dumps(query_result)}")
+            
+            # Return just the query parameters for backward compatibility
+            return jsonify(query_result)
     except Exception as e:
         logger.error(f"Error generating query: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -852,6 +892,7 @@ def analyze_search_results():
     Analyze FHIR search results with Claude AI.
     
     This endpoint takes FHIR search results and the original query, and returns an analysis.
+    Supports Model Context Protocol (MCP) with inspector_mode for detailed model outputs.
     """
     if not fhir_client.is_configured():
         return jsonify({'error': 'FHIR server not configured'}), 400
@@ -867,38 +908,30 @@ def analyze_search_results():
         if not data or 'results' not in data or 'query' not in data:
             return jsonify({'error': 'Results or query not provided'}), 400
         
-        # Prepare a system prompt for analyzing FHIR search results
-        system_prompt = """
-        You are an expert in analyzing FHIR healthcare data.
-        Analyze these FHIR search results in relation to the original query.
-        Focus on:
-        1. The key patterns and insights in the data
-        2. Any anomalies or unexpected findings
-        3. How well the results address the original query
-        4. Suggestions for further searches or refinements
+        # Check if inspector mode is enabled
+        inspector_mode = data.get('inspector_mode', False)
         
-        Structure your response in clear sections with bullet points where appropriate.
-        """
+        # Use the new MCP-enabled method
+        analysis = claude_client.analyze_search_results(
+            search_results=data['results'],
+            query=data['query'],
+            model=data.get('model', 'claude-3-haiku-20240307'),
+            max_tokens=data.get('max_tokens', 1500),
+            inspector_mode=inspector_mode
+        )
         
-        # Craft the user prompt with the resource and query
-        results_json = json.dumps(data['results'], indent=2)
-        user_prompt = f"""
-        Original query: {data['query']}
-        
-        FHIR search results:
-        ```json
-        {results_json}
-        ```
-        
-        Please analyze these results in relation to the query.
-        """
-        
-        # Generate the analysis
-        summary = claude_client.generate_response(user_prompt, system_prompt=system_prompt)
-        
-        return jsonify({
-            'summary': summary,
-        })
+        if inspector_mode:
+            # Return the full MCP response with inspection data
+            return jsonify({
+                'summary': analysis.get('text', ''),
+                'inspection': analysis.get('inspection', {}),
+                'context': analysis.get('context', {})
+            })
+        else:
+            # Return the simple analysis text for backward compatibility
+            return jsonify({
+                'summary': analysis,
+            })
     except Exception as e:
         logger.error(f"Error analyzing search results: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -909,6 +942,7 @@ def generate_response():
     Generate a response from Claude AI based on a prompt.
     
     This endpoint takes a prompt and optional FHIR context, and returns a response.
+    Supports Model Context Protocol (MCP) with inspector_mode for detailed model outputs.
     """
     if not fhir_client.is_configured():
         return jsonify({'error': 'FHIR server not configured'}), 400
@@ -923,6 +957,9 @@ def generate_response():
         
         if not data or 'prompt' not in data:
             return jsonify({'error': 'No prompt provided'}), 400
+        
+        # Check if inspector mode is enabled
+        inspector_mode = data.get('inspector_mode', False)
         
         # Check for optional parameters
         model = data.get('model', 'claude-3-haiku-20240307')
@@ -942,17 +979,26 @@ def generate_response():
             ```
             """
         
-        # Generate the response
+        # Generate the response with inspector mode if requested
         response = claude_client.generate_response(
             prompt=prompt,
             model=model,
             max_tokens=max_tokens,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            inspector_mode=inspector_mode
         )
         
-        return jsonify({
-            'response': response,
-        })
+        if inspector_mode:
+            # Return the full MCP response with inspection data
+            return jsonify({
+                'response': response.get('text', ''),
+                'inspection': response.get('inspection', {})
+            })
+        else:
+            # Return the simple response text for backward compatibility
+            return jsonify({
+                'response': response,
+            })
     except Exception as e:
         logger.error(f"Error generating response: {str(e)}")
         return jsonify({'error': str(e)}), 500
