@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}MCP FHIR Server - Page Not Found{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-danger text-white">
+        <h1 class="card-title mb-0">
+            <i class="fas fa-exclamation-triangle me-2"></i>404 - Page Not Found
+        </h1>
+    </div>
+    <div class="card-body text-center">
+        <p class="lead mb-4">
+            The page you requested could not be found.
+        </p>
+        <div class="mb-4">
+            <i class="fas fa-map-signs fa-5x text-muted"></i>
+        </div>
+        <p>
+            The page might have been moved, deleted, or never existed.
+        </p>
+        <div class="mt-4">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="fas fa-home me-2"></i>Return to Home
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
