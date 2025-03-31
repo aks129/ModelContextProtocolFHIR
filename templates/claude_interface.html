@@ -386,7 +386,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Call the FHIR search API
     fetch(`/api/fhir/${resourceType}?${new URLSearchParams(params)}`)
-      .then(response => response.json())
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+      })
       .then(data => {
         // Format the search results
         const resultsJson = JSON.stringify(data, null, 2);

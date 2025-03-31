@@ -295,7 +295,7 @@ class FHIRClient:
             dict: Search results bundle
             
         Raises:
-            Exception: If request fails
+            Exception: If request fails or the response is not valid JSON
         """
         if not self.is_configured():
             raise ValueError("FHIR client not configured with a base URL")
@@ -320,7 +320,21 @@ class FHIRClient:
                     raise Exception(f"Resource search failed. For HAPI FHIR, please include '/baseR4' in the base URL. Try 'hapi.fhir.org/baseR4'")
             
             response.raise_for_status()
-            return response.json()
+            
+            # Check if the response is JSON
+            content_type = response.headers.get('Content-Type', '')
+            if 'application/json' not in content_type and 'application/fhir+json' not in content_type:
+                logger.error(f"Non-JSON response received: {content_type}")
+                raise Exception(f"Server returned non-JSON response. Expected JSON, got {content_type}")
+            
+            try:
+                return response.json()
+            except ValueError as json_error:
+                logger.error(f"Error parsing JSON response: {str(json_error)}")
+                # Add the first 100 characters of the response to help diagnose the issue
+                preview = response.text[:100] + "..." if len(response.text) > 100 else response.text
+                raise Exception(f"Failed to parse server response as JSON. Response preview: {preview}")
+                
         except requests.exceptions.RequestException as e:
             logger.error(f"Error searching for {resource_type} resources: {str(e)}")
             if response and response.status_code == 404:

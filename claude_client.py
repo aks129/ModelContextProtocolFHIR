@@ -204,12 +204,41 @@ class ClaudeClient:
             cleaned_response = response_text.strip()
             if cleaned_response.startswith("```json"):
                 cleaned_response = cleaned_response[7:]
+            elif cleaned_response.startswith("```"):
+                cleaned_response = cleaned_response[3:]
             if cleaned_response.endswith("```"):
                 cleaned_response = cleaned_response[:-3]
                 
             cleaned_response = cleaned_response.strip()
             
-            return json.loads(cleaned_response)
+            try:
+                # Try to parse the response as JSON
+                result = json.loads(cleaned_response)
+                
+                # Validate the result has the expected structure
+                if not isinstance(result, dict):
+                    logger.warning(f"Claude returned non-dictionary JSON: {cleaned_response}")
+                    result = {"resourceType": "Patient", "parameters": {}}
+                
+                # Ensure resourceType and parameters exist
+                if "resourceType" not in result:
+                    logger.warning("resourceType missing from Claude response, defaulting to Patient")
+                    result["resourceType"] = "Patient"
+                
+                if "parameters" not in result:
+                    logger.warning("parameters missing from Claude response, using empty parameters")
+                    result["parameters"] = {}
+                
+                return result
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Claude response as JSON: {e}. Response: {cleaned_response}")
+                # If parsing fails, return a default structure
+                return {
+                    "resourceType": "Patient",
+                    "parameters": {},
+                    "error": f"Failed to parse response: {str(e)}"
+                }
                 
         except Exception as e:
             logger.error(f"Error generating FHIR query: {str(e)}")
