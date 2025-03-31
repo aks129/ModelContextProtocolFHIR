@@ -6,6 +6,7 @@ from flask import render_template, request, jsonify, session, redirect, url_for,
 from marshmallow import ValidationError
 from validators import FHIRServerSchema, FHIRResourceRequestSchema
 from fhir_client import FHIRClient
+from claude_client import ClaudeClient
 from models import db, FHIRServerConfig, RequestLog
 from main import app
 
@@ -16,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 # Initialize FHIR client
 fhir_client = FHIRClient()
+
+# Initialize Claude client
+claude_client = ClaudeClient()
 
 # Configure FHIR client with default server if available
 with app.app_context():
@@ -618,3 +622,202 @@ def server_error(e):
     """Handle 500 errors."""
     logger.error(f"Server error: {str(e)}")
     return render_template('500.html', error=str(e)), 500
+
+# Claude AI Interface
+@app.route('/claude')
+def claude_interface():
+    """Render the Claude AI interface page."""
+    if not fhir_client.is_configured():
+        flash('Please configure your FHIR server settings first', 'warning')
+        return redirect(url_for('settings'))
+    
+    # Check if Claude API key is configured in environment
+    claude_configured = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    
+    # Get FHIR server information for status display
+    claude_status = {
+        'claude_configured': claude_configured,
+        'fhir_configured': fhir_client.is_configured(),
+        'fhir_server_url': fhir_client.base_url,
+        'fhir_server_name': None
+    }
+    
+    # Get the server name if we have a configuration
+    if 'fhir_server' in session and 'config_id' in session['fhir_server']:
+        config = FHIRServerConfig.query.get(session['fhir_server']['config_id'])
+        if config:
+            claude_status['fhir_server_name'] = config.name
+    
+    return render_template('claude_interface.html', claude_status=claude_status)
+
+# Claude API Endpoints - These will be fully implemented when ready to test end-to-end
+@app.route('/api/claude/analyze-resource', methods=['POST'])
+def analyze_resource():
+    """
+    Analyze a FHIR resource with Claude AI.
+    
+    This endpoint takes a FHIR resource as input and returns an analysis of the resource.
+    """
+    if not fhir_client.is_configured():
+        return jsonify({'error': 'FHIR server not configured'}), 400
+    
+    # Check if Claude API key is available
+    if not claude_client.is_configured():
+        return jsonify({'error': 'Claude AI API key not configured'}), 400
+        
+    try:
+        # Get the resource from the request
+        data = request.json
+        
+        if not data or 'resource' not in data:
+            return jsonify({'error': 'No resource provided'}), 400
+        
+        # Generate analysis of the FHIR resource
+        analysis = claude_client.analyze_fhir_resource(data['resource'])
+        
+        return jsonify({
+            'analysis': analysis,
+        })
+    except Exception as e:
+        logger.error(f"Error analyzing resource: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/claude/generate-query', methods=['POST'])
+def generate_query():
+    """
+    Generate FHIR search parameters from a natural language query.
+    
+    This endpoint takes a natural language query and returns FHIR search parameters.
+    """
+    if not fhir_client.is_configured():
+        return jsonify({'error': 'FHIR server not configured'}), 400
+    
+    # Check if Claude API key is available
+    if not claude_client.is_configured():
+        return jsonify({'error': 'Claude AI API key not configured'}), 400
+        
+    try:
+        # Get the query from the request
+        data = request.json
+        
+        if not data or 'query' not in data:
+            return jsonify({'error': 'No query provided'}), 400
+        
+        # Generate FHIR query parameters from natural language
+        query_params = claude_client.generate_fhir_query(data['query'])
+        
+        return jsonify(query_params)
+    except Exception as e:
+        logger.error(f"Error generating query: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/claude/analyze-search-results', methods=['POST'])
+def analyze_search_results():
+    """
+    Analyze FHIR search results with Claude AI.
+    
+    This endpoint takes FHIR search results and the original query, and returns an analysis.
+    """
+    if not fhir_client.is_configured():
+        return jsonify({'error': 'FHIR server not configured'}), 400
+    
+    # Check if Claude API key is available
+    if not claude_client.is_configured():
+        return jsonify({'error': 'Claude AI API key not configured'}), 400
+        
+    try:
+        # Get the results and query from the request
+        data = request.json
+        
+        if not data or 'results' not in data or 'query' not in data:
+            return jsonify({'error': 'Results or query not provided'}), 400
+        
+        # Prepare a system prompt for analyzing FHIR search results
+        system_prompt = """
+        You are an expert in analyzing FHIR healthcare data.
+        Analyze these FHIR search results in relation to the original query.
+        Focus on:
+        1. The key patterns and insights in the data
+        2. Any anomalies or unexpected findings
+        3. How well the results address the original query
+        4. Suggestions for further searches or refinements
+        
+        Structure your response in clear sections with bullet points where appropriate.
+        """
+        
+        # Craft the user prompt with the resource and query
+        results_json = json.dumps(data['results'], indent=2)
+        user_prompt = f"""
+        Original query: {data['query']}
+        
+        FHIR search results:
+        ```json
+        {results_json}
+        ```
+        
+        Please analyze these results in relation to the query.
+        """
+        
+        # Generate the analysis
+        summary = claude_client.generate_response(user_prompt, system_prompt=system_prompt)
+        
+        return jsonify({
+            'summary': summary,
+        })
+    except Exception as e:
+        logger.error(f"Error analyzing search results: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/claude/generate-response', methods=['POST'])
+def generate_response():
+    """
+    Generate a response from Claude AI based on a prompt.
+    
+    This endpoint takes a prompt and optional FHIR context, and returns a response.
+    """
+    if not fhir_client.is_configured():
+        return jsonify({'error': 'FHIR server not configured'}), 400
+    
+    # Check if Claude API key is available
+    if not claude_client.is_configured():
+        return jsonify({'error': 'Claude AI API key not configured'}), 400
+        
+    try:
+        # Get the prompt and context from the request
+        data = request.json
+        
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'No prompt provided'}), 400
+        
+        # Check for optional parameters
+        model = data.get('model', 'claude-3-haiku-20240307')
+        max_tokens = data.get('max_tokens', 1000)
+        system_prompt = data.get('system_prompt')
+        
+        # Include FHIR context if provided
+        prompt = data['prompt']
+        if 'fhir_context' in data and data['fhir_context']:
+            fhir_context_json = json.dumps(data['fhir_context'], indent=2)
+            prompt = f"""
+            {prompt}
+            
+            Here is the FHIR context for reference:
+            ```json
+            {fhir_context_json}
+            ```
+            """
+        
+        # Generate the response
+        response = claude_client.generate_response(
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt
+        )
+        
+        return jsonify({
+            'response': response,
+        })
+    except Exception as e:
+        logger.error(f"Error generating response: {str(e)}")
+        return jsonify({'error': str(e)}), 500

@@ -40,6 +40,12 @@
                         <a class="nav-link {% if request.path == url_for('documentation') %}active{% endif %}" 
                            href="{{ url_for('documentation') }}">Documentation</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == url_for('claude_interface') %}active{% endif %}" 
+                           href="{{ url_for('claude_interface') }}">
+                           <i class="fas fa-robot me-1"></i>Claude AI
+                        </a>
+                    </li>
                 </ul>
                 <div class="d-flex" id="serverStatusIndicator">
                     <span class="badge bg-secondary">Server Status: Unknown</span>
