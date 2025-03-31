@@ -22,8 +22,15 @@ class ClaudeClient:
         api_key = os.environ.get('ANTHROPIC_API_KEY')
         if api_key:
             try:
-                self.client = Anthropic(api_key=api_key)
-                logger.info("Claude client initialized successfully")
+                # First try - if API key starts with sk-ant-, use it directly
+                if api_key.startswith('sk-ant-'):
+                    self.client = Anthropic(api_key=api_key)
+                    logger.info("Claude client initialized successfully")
+                # Second try - if API key doesn't start with sk-ant-, add the prefix
+                else:
+                    formatted_key = f"sk-ant-{api_key}"
+                    self.client = Anthropic(api_key=formatted_key)
+                    logger.info("Claude client initialized successfully with formatted key")
             except Exception as e:
                 logger.error(f"Error initializing Claude client: {str(e)}")
                 self.client = None
