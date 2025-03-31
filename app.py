@@ -297,10 +297,32 @@ def api_status():
             # Test connection to FHIR server
             fhir_client.test_connection()
             status['fhir_server_connection'] = 'connected'
+            
+            # Include current FHIR server details if connected
+            if 'fhir_server' in session:
+                status['current_fhir_server'] = {
+                    'base_url': session['fhir_server'].get('base_url'),
+                    'auth_type': session['fhir_server'].get('auth_type')
+                }
+                
+                # Get the configuration if available
+                if 'config_id' in session['fhir_server']:
+                    config = FHIRServerConfig.query.get(session['fhir_server']['config_id'])
+                    if config:
+                        status['current_fhir_server']['name'] = config.name
+                        status['current_fhir_server']['config_id'] = config.id
+                        
         except Exception as e:
             logger.error(f"FHIR server connection test failed: {str(e)}")
             status['fhir_server_connection'] = 'error'
             status['error_message'] = str(e)
+            
+            # Still include the server details even if connection failed
+            if 'fhir_server' in session:
+                status['current_fhir_server'] = {
+                    'base_url': session['fhir_server'].get('base_url'),
+                    'auth_type': session['fhir_server'].get('auth_type')
+                }
     
     return jsonify(status)
 

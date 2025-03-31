@@ -21,6 +21,12 @@ class FHIRClient:
             username (str): Username for basic authentication
             password (str): Password for basic authentication
         """
+        # Ensure the base_url uses HTTPS
+        if base_url and not base_url.startswith(('http://', 'https://')):
+            base_url = 'https://' + base_url
+        elif base_url and base_url.startswith('http://'):
+            base_url = 'https://' + base_url[7:]
+            
         self.base_url = base_url
         self.auth_type = auth_type
         self.api_key = api_key
@@ -47,6 +53,12 @@ class FHIRClient:
             username (str): Username for basic authentication
             password (str): Password for basic authentication
         """
+        # Ensure the base_url uses HTTPS
+        if base_url and not base_url.startswith(('http://', 'https://')):
+            base_url = 'https://' + base_url
+        elif base_url and base_url.startswith('http://'):
+            base_url = 'https://' + base_url[7:]
+            
         self.base_url = base_url
         self.auth_type = auth_type
         self.api_key = api_key
@@ -97,8 +109,11 @@ class FHIRClient:
             raise ValueError("FHIR client not configured with a base URL")
         
         try:
+            # Try to get the metadata, which is a better test than the base URL
+            # as some servers return errors on the base URL
+            url = urljoin(self.base_url, 'metadata')
             response = requests.get(
-                self.base_url, 
+                url, 
                 headers=self.headers,
                 auth=self.auth,
                 timeout=10
