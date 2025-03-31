@@ -148,6 +148,45 @@ def fhir_explorer():
     
     return render_template('fhir_explorer.html')
 
+# Test Connection Endpoint
+@app.route('/api/test-connection', methods=['POST'])
+def test_connection():
+    """Test a connection to a FHIR server with provided settings."""
+    try:
+        # Get connection settings from request
+        settings = request.json
+        
+        if not settings or 'base_url' not in settings:
+            return jsonify({
+                'fhir_server_configured': False,
+                'fhir_server_connection': 'error',
+                'error_message': 'Base URL is required'
+            }), 400
+        
+        # Create a temporary FHIR client for testing
+        temp_client = FHIRClient(
+            base_url=settings.get('base_url'),
+            auth_type=settings.get('auth_type'),
+            api_key=settings.get('api_key'),
+            username=settings.get('username'),
+            password=settings.get('password')
+        )
+        
+        # Test the connection
+        temp_client.test_connection()
+        
+        return jsonify({
+            'fhir_server_configured': True,
+            'fhir_server_connection': 'connected'
+        })
+    except Exception as e:
+        logger.error(f"Test connection failed: {str(e)}")
+        return jsonify({
+            'fhir_server_configured': True,
+            'fhir_server_connection': 'error',
+            'error_message': str(e)
+        }), 200  # Return 200 even for connection errors as this is an expected case
+
 # API Endpoints for FHIR Server Configuration Management
 @app.route('/api/configs', methods=['GET'])
 def get_configurations():

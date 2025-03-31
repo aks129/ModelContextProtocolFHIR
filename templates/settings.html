@@ -342,12 +342,23 @@
                 </div>
             `;
             
-            // Test the connection with the current settings
-            fetch('/api/status', {
-                method: 'GET',
+            // Get the form values for testing
+            const formData = new FormData(configForm);
+            const testData = {
+                base_url: formData.get('base_url'),
+                auth_type: formData.get('auth_type'),
+                api_key: formData.get('api_key'),
+                username: formData.get('username'),
+                password: formData.get('password')
+            };
+            
+            // Make a POST request to temporarily test the connection
+            fetch('/api/test-connection', {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify(testData)
             })
             .then(response => response.json())
             .then(data => {
