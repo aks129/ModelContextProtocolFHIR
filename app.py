@@ -367,6 +367,51 @@ def api_status():
     
     return jsonify(status)
 
+# Add a route to search for resources (used by Claude interface)
+@app.route('/api/fhir/<resource_type>', methods=['GET'])
+def search_fhir_resources(resource_type):
+    """Search for FHIR resources of a specific type with query parameters."""
+    if not fhir_client.is_configured():
+        return jsonify({'error': 'FHIR server not configured'}), 400
+    
+    # Get query parameters
+    params = request.args.to_dict()
+    
+    # Create log entry
+    log_entry = RequestLog(
+        method='GET',
+        resource_type=resource_type,
+        query_params=json.dumps(params) if params else None
+    )
+    
+    # Get server config ID if available
+    if session.get('fhir_server', {}).get('config_id'):
+        log_entry.server_config_id = session['fhir_server']['config_id']
+    
+    start_time = time.time()
+    
+    try:
+        results = fhir_client.search_resources(resource_type, params)
+        
+        # Update log with success
+        log_entry.response_status = 200
+        log_entry.execution_time_ms = (time.time() - start_time) * 1000
+        db.session.add(log_entry)
+        db.session.commit()
+        
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Error searching for {resource_type} resources: {str(e)}")
+        
+        # Update log with error
+        log_entry.response_status = 500
+        log_entry.error_message = str(e)
+        log_entry.execution_time_ms = (time.time() - start_time) * 1000
+        db.session.add(log_entry)
+        db.session.commit()
+        
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/fhir/metadata', methods=['GET'])
 def fhir_metadata():
     """Get the FHIR server metadata/capability statement."""
