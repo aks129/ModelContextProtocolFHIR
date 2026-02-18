@@ -13,10 +13,11 @@ Provides an R6-only REST surface with:
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 from models import db
-from r6.models import R6Resource, AuditEventRecord
+from r6.models import R6Resource, ContextEnvelope, AuditEventRecord
 from r6.context_builder import ContextBuilder
 from r6.validator import R6Validator
 from r6.audit import record_audit_event
@@ -31,6 +32,9 @@ R6_FHIR_VERSION = '6.0.0-ballot3'
 # Initialize services
 context_builder = ContextBuilder()
 validator = R6Validator()
+
+# Valid FHIR id pattern
+_FHIR_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-.]{1,64}$')
 
 
 @r6_blueprint.route('/metadata', methods=['GET'])
@@ -84,9 +88,8 @@ def _resource_capability(resource_type):
         {'code': 'read'},
         {'code': 'create'},
         {'code': 'update'},
+        {'code': 'search-type'},
     ]
-    if resource_type == 'AuditEvent':
-        interactions.append({'code': 'search-type'})
     return {
         'type': resource_type,
         'interaction': interactions,
@@ -119,16 +122,33 @@ def create_resource(resource_type):
         return _operation_outcome('error', 'security',
                                   'Write operations require X-Step-Up-Token header'), 403
 
+    # Validate before storing (agent proposals must pass $validate before commit)
+    validation_result = validator.validate_resource(body)
+    if not validation_result['valid']:
+        return jsonify(validation_result['operation_outcome']), 422
+
+    # Validate client-supplied id if present
+    client_id = body.get('id')
+    if client_id and not _FHIR_ID_PATTERN.match(client_id):
+        return _operation_outcome('error', 'invalid',
+                                  'Resource id must match [A-Za-z0-9\\-.]{1,64}'), 400
+
     resource_json = json.dumps(body, separators=(',', ':'), sort_keys=True)
     resource = R6Resource(
         resource_type=resource_type,
         resource_json=resource_json,
-        resource_id=body.get('id'),
+        resource_id=client_id,
         tenant_id=request.headers.get('X-Tenant-Id')
     )
 
-    db.session.add(resource)
-    db.session.commit()
+    try:
+        db.session.add(resource)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to create {resource_type}: {e}')
+        return _operation_outcome('error', 'exception',
+                                  'Failed to store resource'), 500
 
     record_audit_event('create', resource_type, resource.id,
                        agent_id=request.headers.get('X-Agent-Id'))
@@ -180,6 +200,16 @@ def update_resource(resource_type, resource_id):
     if not body:
         return _operation_outcome('error', 'invalid', 'Request body must be valid JSON'), 400
 
+    # Validate resourceType matches URL
+    if body.get('resourceType') != resource_type:
+        return _operation_outcome('error', 'invalid',
+                                  f'resourceType mismatch: expected {resource_type}'), 400
+
+    # Validate body id matches URL id
+    if body.get('id') and body['id'] != resource_id:
+        return _operation_outcome('error', 'invalid',
+                                  f'Resource id in body ({body["id"]}) does not match URL ({resource_id})'), 400
+
     resource = R6Resource.query.filter_by(
         id=resource_id, resource_type=resource_type, is_deleted=False
     ).first()
@@ -195,7 +225,14 @@ def update_resource(resource_type, resource_id):
 
     resource_json = json.dumps(body, separators=(',', ':'), sort_keys=True)
     resource.update_resource(resource_json)
-    db.session.commit()
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to update {resource_type}/{resource_id}: {e}')
+        return _operation_outcome('error', 'exception',
+                                  'Failed to update resource'), 500
 
     record_audit_event('update', resource_type, resource_id,
                        agent_id=request.headers.get('X-Agent-Id'))
@@ -208,6 +245,10 @@ def update_resource(resource_type, resource_id):
 @r6_blueprint.route('/<resource_type>', methods=['GET'])
 def search_resources(resource_type):
     """Search R6 FHIR resources with basic parameters."""
+    # Delegate AuditEvent searches to the dedicated handler
+    if resource_type == 'AuditEvent':
+        return search_audit_events()
+
     if not R6Resource.is_supported_type(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
@@ -216,18 +257,23 @@ def search_resources(resource_type):
         resource_type=resource_type, is_deleted=False
     )
 
-    # Basic search parameters
+    # Basic search: patient reference with sanitized input
     patient_ref = request.args.get('patient')
     if patient_ref:
-        query = query.filter(R6Resource.resource_json.contains(patient_ref))
+        # Validate patient ref format and escape LIKE wildcards
+        sanitized = patient_ref.replace('%', '').replace('_', '')
+        if sanitized:
+            query = query.filter(R6Resource.resource_json.contains(sanitized))
 
     context_id = request.args.get('context-id')
     tenant_id = request.headers.get('X-Tenant-Id')
     if tenant_id:
         query = query.filter_by(tenant_id=tenant_id)
 
+    # Clamp _count to [1, 200] to prevent negative/zero bypass
     count = request.args.get('_count', 50, type=int)
-    resources = query.limit(min(count, 200)).all()
+    count = max(1, min(count, 200))
+    resources = query.limit(count).all()
 
     bundle = {
         'resourceType': 'Bundle',
@@ -304,12 +350,16 @@ def ingest_context():
         return jsonify(result), 201
     except ValueError as e:
         return _operation_outcome('error', 'invalid', str(e)), 400
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to ingest bundle: {e}')
+        return _operation_outcome('error', 'exception',
+                                  'Failed to ingest bundle'), 500
 
 
 @r6_blueprint.route('/context/<context_id>', methods=['GET'])
 def get_context(context_id):
     """Retrieve a context envelope by ID."""
-    from r6.models import ContextEnvelope
     envelope = ContextEnvelope.query.filter_by(context_id=context_id).first()
     if not envelope:
         return _operation_outcome('error', 'not-found',
@@ -339,6 +389,7 @@ def search_audit_events():
     context_id = request.args.get('context-id')
     resource_type = request.args.get('entity-type')
     count = request.args.get('_count', 50, type=int)
+    count = max(1, min(count, 200))
 
     query = AuditEventRecord.query.order_by(AuditEventRecord.recorded.desc())
 
@@ -347,7 +398,7 @@ def search_audit_events():
     if resource_type:
         query = query.filter_by(resource_type=resource_type)
 
-    events = query.limit(min(count, 200)).all()
+    events = query.limit(count).all()
 
     bundle = {
         'resourceType': 'Bundle',

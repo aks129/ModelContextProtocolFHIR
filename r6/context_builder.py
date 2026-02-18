@@ -8,7 +8,6 @@ with retention, redaction, and caching support.
 import json
 import hashlib
 import logging
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from models import db
@@ -41,6 +40,10 @@ class ContextBuilder:
 
         Returns:
             dict with context_id, resource_count, and envelope summary
+
+        Raises:
+            ValueError: If bundle is empty
+            Exception: On database errors (caller should rollback)
         """
         entries = bundle.get('entry', [])
         if not entries:
@@ -54,85 +57,92 @@ class ContextBuilder:
         stored_resources = []
         context_items = []
 
-        for entry in entries:
-            resource = entry.get('resource')
-            if not resource:
-                continue
+        try:
+            for entry in entries:
+                resource = entry.get('resource')
+                if not resource:
+                    continue
 
-            resource_type = resource.get('resourceType')
-            if not resource_type or not R6Resource.is_supported_type(resource_type):
-                logger.debug(f'Skipping unsupported resource type: {resource_type}')
-                continue
+                resource_type = resource.get('resourceType')
+                if not resource_type or not R6Resource.is_supported_type(resource_type):
+                    logger.debug(f'Skipping unsupported resource type: {resource_type}')
+                    continue
 
-            # Apply redaction before storage
-            redacted = self._apply_redaction(resource)
-            resource_json = json.dumps(redacted, separators=(',', ':'), sort_keys=True)
+                # Apply redaction before storage
+                redacted = self._apply_redaction(resource)
+                resource_json = json.dumps(redacted, separators=(',', ':'), sort_keys=True)
 
-            # Create or update the resource
-            resource_id = resource.get('id', str(uuid.uuid4()))
-            existing = R6Resource.query.filter_by(
-                id=resource_id, resource_type=resource_type
-            ).first()
+                # Create or update the resource
+                resource_id = resource.get('id', str(uuid.uuid4()))
+                existing = R6Resource.query.filter_by(
+                    id=resource_id, resource_type=resource_type
+                ).first()
 
-            if existing:
-                existing.update_resource(resource_json)
-                r6_resource = existing
-            else:
-                r6_resource = R6Resource(
-                    resource_type=resource_type,
-                    resource_json=resource_json,
-                    resource_id=resource_id,
-                    tenant_id=tenant_id
-                )
-                db.session.add(r6_resource)
+                if existing:
+                    existing.update_resource(resource_json)
+                    r6_resource = existing
+                else:
+                    r6_resource = R6Resource(
+                        resource_type=resource_type,
+                        resource_json=resource_json,
+                        resource_id=resource_id,
+                        tenant_id=tenant_id
+                    )
+                    db.session.add(r6_resource)
 
-            stored_resources.append(r6_resource)
+                stored_resources.append(r6_resource)
 
-            # Build context item
-            slice_name = self._determine_slice(resource_type)
-            context_items.append({
-                'resource_ref': f'{resource_type}/{r6_resource.id}',
-                'resource_version': str(r6_resource.version_id),
-                'slice_name': slice_name,
-                'sha256': r6_resource.sha256
-            })
+                # Build context item
+                slice_name = self._determine_slice(resource_type)
+                context_items.append({
+                    'resource_ref': f'{resource_type}/{r6_resource.id}',
+                    'resource_version': str(r6_resource.version_id),
+                    'slice_name': slice_name,
+                    'sha256': r6_resource.sha256
+                })
 
-        # Create context envelope
-        now = datetime.now(timezone.utc)
-        envelope = ContextEnvelope(
-            tenant_id=tenant_id,
-            patient_ref=patient_ref or 'unknown',
-            encounter_ref=encounter_ref,
-            window_start=now - timedelta(days=self.default_window_days),
-            window_end=now,
-            redaction_profile='standard',
-            consent_decision='permit',
-            expires_at=now + timedelta(minutes=self.default_ttl_minutes)
-        )
-        db.session.add(envelope)
-        db.session.flush()  # Get the context_id
-
-        # Add context items
-        for item_data in context_items:
-            item = ContextItem(
-                context_id=envelope.context_id,
-                resource_ref=item_data['resource_ref'],
-                resource_version=item_data['resource_version'],
-                slice_name=item_data['slice_name'],
-                sha256=item_data['sha256']
+            # Create context envelope
+            now = datetime.now(timezone.utc)
+            envelope = ContextEnvelope(
+                tenant_id=tenant_id,
+                patient_ref=patient_ref or 'unknown',
+                encounter_ref=encounter_ref,
+                window_start=now - timedelta(days=self.default_window_days),
+                window_end=now,
+                redaction_profile='standard',
+                consent_decision='permit',
+                expires_at=now + timedelta(minutes=self.default_ttl_minutes)
             )
-            db.session.add(item)
+            db.session.add(envelope)
+            db.session.flush()  # Get the context_id
 
-        db.session.commit()
+            # Add context items
+            for item_data in context_items:
+                item = ContextItem(
+                    context_id=envelope.context_id,
+                    resource_ref=item_data['resource_ref'],
+                    resource_version=item_data['resource_version'],
+                    slice_name=item_data['slice_name'],
+                    sha256=item_data['sha256']
+                )
+                db.session.add(item)
 
-        return {
-            'context_id': envelope.context_id,
-            'patient_ref': patient_ref,
-            'encounter_ref': encounter_ref,
-            'resource_count': len(stored_resources),
-            'expires_at': envelope.expires_at.isoformat(),
-            'items': context_items
-        }
+            db.session.commit()
+
+            return {
+                'context_id': envelope.context_id,
+                'patient_ref': patient_ref,
+                'encounter_ref': encounter_ref,
+                'resource_count': len(stored_resources),
+                'expires_at': envelope.expires_at.isoformat(),
+                'items': context_items
+            }
+
+        except ValueError:
+            raise  # Re-raise validation errors
+        except Exception:
+            db.session.rollback()
+            raise  # Re-raise after cleanup so caller can handle
 
     def _find_patient_ref(self, entries):
         """Find the patient reference from Bundle entries."""
@@ -172,39 +182,55 @@ class ContextBuilder:
     def _apply_redaction(self, resource):
         """
         Apply standard redaction profile to a resource.
-        Removes free-text notes, full identifiers (keep last 4),
-        and addresses for privacy.
+        Strips free-text notes, full identifiers (keep last 4),
+        addresses, and telecom for privacy.
         """
         redacted = json.loads(json.dumps(resource))  # Deep copy
 
+        self._redact_resource_fields(redacted)
+
+        # Also redact any contained resources
+        if 'contained' in redacted and isinstance(redacted['contained'], list):
+            for contained in redacted['contained']:
+                if isinstance(contained, dict):
+                    self._redact_resource_fields(contained)
+
+        return redacted
+
+    def _redact_resource_fields(self, resource):
+        """Redact PHI fields from a single resource dict (in-place)."""
         # Remove text narratives
-        if 'text' in redacted:
-            redacted['text'] = {
+        if 'text' in resource:
+            resource['text'] = {
                 'status': 'empty',
                 'div': '<div xmlns="http://www.w3.org/1999/xhtml">[Redacted]</div>'
             }
 
         # Redact identifiers (keep last 4 characters)
-        if 'identifier' in redacted and isinstance(redacted['identifier'], list):
-            for ident in redacted['identifier']:
+        if 'identifier' in resource and isinstance(resource['identifier'], list):
+            for ident in resource['identifier']:
                 if 'value' in ident and isinstance(ident['value'], str):
                     val = ident['value']
                     if len(val) > 4:
                         ident['value'] = '***' + val[-4:]
 
         # Remove full addresses
-        if 'address' in redacted and isinstance(redacted['address'], list):
-            for addr in redacted['address']:
+        if 'address' in resource and isinstance(resource['address'], list):
+            for addr in resource['address']:
                 addr.pop('line', None)
                 addr.pop('text', None)
                 # Keep city, state, country for demographics
 
+        # Redact telecom (phone numbers, emails)
+        if 'telecom' in resource and isinstance(resource['telecom'], list):
+            for telecom in resource['telecom']:
+                if 'value' in telecom and isinstance(telecom['value'], str):
+                    telecom['value'] = '[Redacted]'
+
         # Remove notes/comments
         for field in ['note', 'comment']:
-            if field in redacted:
-                if isinstance(redacted[field], list):
-                    redacted[field] = [{'text': '[Redacted]'}]
-                elif isinstance(redacted[field], str):
-                    redacted[field] = '[Redacted]'
-
-        return redacted
+            if field in resource:
+                if isinstance(resource[field], list):
+                    resource[field] = [{'text': '[Redacted]'}]
+                elif isinstance(resource[field], str):
+                    resource[field] = '[Redacted]'

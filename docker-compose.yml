@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   fhir-r6-showcase:
     build:
@@ -11,7 +9,7 @@ services:
       - FLASK_ENV=development
       - SQLALCHEMY_DATABASE_URI=sqlite:///mcp_server.db
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - FHIR_VALIDATOR_URL=http://validator:8080
+      - FHIR_VALIDATOR_URL=${FHIR_VALIDATOR_URL:-http://localhost:8080}
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       - redis
@@ -22,8 +20,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     networks:
       - fhir-net

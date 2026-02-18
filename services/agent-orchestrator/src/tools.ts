@@ -213,7 +213,10 @@ export class FHIRTools {
   }
 
   async getContext(contextId: string): Promise<Record<string, unknown>> {
-    const resp = await fetch(`${this.baseUrl}/context/${contextId}`);
+    const resp = await fetch(`${this.baseUrl}/context/${encodeURIComponent(contextId)}`);
+    if (!resp.ok) {
+      return { error: `Context fetch failed with status ${resp.status}` };
+    }
     return (await resp.json()) as Record<string, unknown>;
   }
 
@@ -222,8 +225,11 @@ export class FHIRTools {
     resourceId: string
   ): Promise<Record<string, unknown>> {
     const resp = await fetch(
-      `${this.baseUrl}/${resourceType}/${resourceId}`
+      `${this.baseUrl}/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`
     );
+    if (!resp.ok) {
+      return { error: `Read failed with status ${resp.status}` };
+    }
     return (await resp.json()) as Record<string, unknown>;
   }
 
@@ -237,24 +243,32 @@ export class FHIRTools {
     params.set("_count", count.toString());
 
     const resp = await fetch(
-      `${this.baseUrl}/${resourceType}?${params.toString()}`
+      `${this.baseUrl}/${encodeURIComponent(resourceType)}?${params.toString()}`
     );
+    if (!resp.ok) {
+      return { error: `Search failed with status ${resp.status}` };
+    }
     return (await resp.json()) as Record<string, unknown>;
   }
 
   private async validateResource(
     resource: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    const resourceType =
-      (resource.resourceType as string) || "Patient";
+    const resourceType = resource.resourceType as string;
+    if (!resourceType) {
+      return { error: "Resource must have a resourceType" };
+    }
     const resp = await fetch(
-      `${this.baseUrl}/${resourceType}/$validate`,
+      `${this.baseUrl}/${encodeURIComponent(resourceType)}/$validate`,
       {
         method: "POST",
         headers: { "Content-Type": "application/fhir+json" },
         body: JSON.stringify(resource),
       }
     );
+    if (!resp.ok) {
+      return { error: `Validation request failed with status ${resp.status}` };
+    }
     return (await resp.json()) as Record<string, unknown>;
   }
 
@@ -278,8 +292,10 @@ export class FHIRTools {
     operation: string,
     stepUpToken: string
   ): Promise<Record<string, unknown>> {
-    const resourceType =
-      (resource.resourceType as string) || "Patient";
+    const resourceType = resource.resourceType as string;
+    if (!resourceType) {
+      return { error: "Resource must have a resourceType" };
+    }
     const headers: Record<string, string> = {
       "Content-Type": "application/fhir+json",
       "X-Step-Up-Token": stepUpToken,
@@ -287,7 +303,7 @@ export class FHIRTools {
 
     let resp;
     if (operation === "create") {
-      resp = await fetch(`${this.baseUrl}/${resourceType}`, {
+      resp = await fetch(`${this.baseUrl}/${encodeURIComponent(resourceType)}`, {
         method: "POST",
         headers,
         body: JSON.stringify(resource),
@@ -298,7 +314,7 @@ export class FHIRTools {
         return { error: "Resource ID required for update" };
       }
       resp = await fetch(
-        `${this.baseUrl}/${resourceType}/${resourceId}`,
+        `${this.baseUrl}/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`,
         {
           method: "PUT",
           headers,

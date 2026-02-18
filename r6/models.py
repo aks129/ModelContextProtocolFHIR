@@ -108,7 +108,8 @@ class ContextItem(db.Model):
     __tablename__ = 'context_items'
 
     id = db.Column(db.Integer, primary_key=True)
-    context_id = db.Column(db.String(64), db.ForeignKey('context_envelopes.context_id'), nullable=False)
+    context_id = db.Column(db.String(64), db.ForeignKey('context_envelopes.context_id'),
+                          nullable=False, index=True)
     resource_ref = db.Column(db.String(128), nullable=False)
     resource_version = db.Column(db.String(16), nullable=True)
     slice_name = db.Column(db.String(64), nullable=True)
@@ -143,6 +144,20 @@ class AuditEventRecord(db.Model):
 
     def to_fhir_json(self):
         """Convert to a FHIR R6 AuditEvent-like JSON."""
+        # Build entity list carefully to avoid null references
+        entity = []
+        if self.resource_type and self.resource_id:
+            entity.append({
+                'what': {
+                    'reference': f'{self.resource_type}/{self.resource_id}'
+                },
+                'role': {
+                    'system': 'http://terminology.hl7.org/CodeSystem/object-role',
+                    'code': '4',
+                    'display': 'Domain Resource'
+                }
+            })
+
         return {
             'resourceType': 'AuditEvent',
             'id': self.id,
@@ -169,18 +184,7 @@ class AuditEventRecord(db.Model):
                     'requestor': True
                 }
             ],
-            'entity': [
-                {
-                    'what': {
-                        'reference': f'{self.resource_type}/{self.resource_id}' if self.resource_type and self.resource_id else None
-                    },
-                    'role': {
-                        'system': 'http://terminology.hl7.org/CodeSystem/object-role',
-                        'code': '4',
-                        'display': 'Domain Resource'
-                    }
-                }
-            ] if self.resource_type else []
+            'entity': entity
         }
 
     def _map_event_code(self):

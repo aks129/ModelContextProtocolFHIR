@@ -6,9 +6,9 @@ Can proxy to the HL7 validator-wrapper when available,
 falls back to structural validation for the showcase.
 """
 
-import json
 import logging
 import os
+import time
 import requests
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,9 @@ R6_RESOURCE_TYPES = [
     'AuditEvent', 'Consent', 'OperationOutcome'
 ]
 
+# TTL for validator availability cache (seconds)
+_AVAILABILITY_TTL = 60
+
 
 class R6Validator:
     """Validates FHIR R6 resources."""
@@ -29,6 +32,7 @@ class R6Validator:
     def __init__(self, validator_url=None):
         self.validator_url = validator_url or VALIDATOR_URL
         self._validator_available = None
+        self._last_availability_check = 0.0
 
     def validate_resource(self, resource, mode='no-action', profile=None):
         """
@@ -51,13 +55,17 @@ class R6Validator:
                 return self._validate_external(resource, profile)
             except Exception as e:
                 logger.warning(f'External validator failed, falling back to structural: {e}')
+                # Invalidate cache on failure so we recheck next time
+                self._validator_available = None
 
         # Structural validation fallback
         return self._validate_structural(resource)
 
     def _is_validator_available(self):
-        """Check if the external validator service is reachable."""
-        if self._validator_available is not None:
+        """Check if the external validator service is reachable (with TTL cache)."""
+        now = time.monotonic()
+        if (self._validator_available is not None
+                and (now - self._last_availability_check) < _AVAILABILITY_TTL):
             return self._validator_available
 
         try:
@@ -66,6 +74,7 @@ class R6Validator:
         except Exception:
             self._validator_available = False
 
+        self._last_availability_check = now
         return self._validator_available
 
     def _validate_external(self, resource, profile=None):
@@ -120,7 +129,16 @@ class R6Validator:
                 'diagnostics': 'resourceType is required',
                 'expression': ['resourceType']
             })
-        elif resource_type not in R6_RESOURCE_TYPES:
+            # Can't do type-specific checks without resourceType
+            return {
+                'valid': False,
+                'operation_outcome': {
+                    'resourceType': 'OperationOutcome',
+                    'issue': issues
+                }
+            }
+
+        if resource_type not in R6_RESOURCE_TYPES:
             issues.append({
                 'severity': 'error',
                 'code': 'value',
@@ -156,7 +174,6 @@ class R6Validator:
     def _validate_patient(self, resource):
         """Validate Patient-specific structure."""
         issues = []
-        # Patient should have at least a name or identifier
         if not resource.get('name') and not resource.get('identifier'):
             issues.append({
                 'severity': 'warning',

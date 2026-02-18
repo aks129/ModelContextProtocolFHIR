@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir uv && uv pip install --system -r pyproject.toml || pip install flask flask-sqlalchemy anthropic marshmallow requests gunicorn email-validator psycopg2-binary
+RUN pip install --no-cache-dir uv && uv pip install --system --project .
 
 # Copy application code
 COPY . .

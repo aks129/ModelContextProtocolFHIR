@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install flask flask-sqlalchemy anthropic marshmallow requests gunicorn email-validator psycopg2-binary pytest
+          pip install uv
+          uv pip install --system --project . --extra test
 
       - name: Run Python tests
         run: python -m pytest tests/ -v --tb=short
@@ -39,7 +40,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm install
 
       - name: TypeScript compile check
         run: npx tsc --noEmit
@@ -54,11 +55,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker images
-        run: docker-compose build fhir-r6-showcase
+        run: docker compose build fhir-r6-showcase
 
       - name: Start services
         run: |
-          docker-compose up -d fhir-r6-showcase redis
+          docker compose up -d fhir-r6-showcase redis
           sleep 5
 
       - name: Smoke test - R6 metadata
@@ -84,4 +85,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker-compose down -v
+        run: docker compose down -v

@@ -5,8 +5,9 @@ Test fixtures for the R6 FHIR Showcase.
 import os
 import pytest
 
-# Set test environment before importing app
+# Set test environment before importing app — prevents file-based DB creation
 os.environ['TESTING'] = '1'
+os.environ['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
 
 
 @pytest.fixture

@@ -14,11 +14,10 @@ app = Flask(__name__)
 # Configure the app
 app.secret_key = os.environ.get("SESSION_SECRET") or "a-development-secret-key"
 
-# Configure the database - use SQLite for development
-sqlite_uri = "sqlite:///mcp_server.db"
-app.config["SQLALCHEMY_DATABASE_URI"] = sqlite_uri
-
-# Print the database URL for debugging
+# Configure the database - use env var or SQLite for development
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "SQLALCHEMY_DATABASE_URI", "sqlite:///mcp_server.db"
+)
 logger.debug(f"Using database URL: {app.config['SQLALCHEMY_DATABASE_URI']}")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 

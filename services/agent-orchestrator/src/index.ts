@@ -11,7 +11,6 @@
  */
 
 import express from "express";
-import { v4 as uuidv4 } from "uuid";
 import { FHIRTools, ToolTier } from "./tools";
 
 const app = express();
@@ -59,11 +58,11 @@ interface JSONRPCRequest {
 app.post("/mcp/rpc", async (req, res) => {
   const rpcRequest: JSONRPCRequest = req.body;
 
-  if (!rpcRequest || rpcRequest.jsonrpc !== "2.0") {
+  if (!rpcRequest || rpcRequest.jsonrpc !== "2.0" || !rpcRequest.method) {
     return res.status(400).json({
       jsonrpc: "2.0",
       error: { code: -32600, message: "Invalid JSON-RPC request" },
-      id: null,
+      id: rpcRequest?.id ?? null,
     });
   }
 
@@ -118,11 +117,12 @@ app.post("/mcp/rpc", async (req, res) => {
         });
     }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal error";
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    console.error(`RPC error for method ${method}:`, detail);
     return res.json({
       jsonrpc: "2.0",
       id,
-      error: { code: -32603, message },
+      error: { code: -32603, message: "Internal error" },
     });
   }
 });

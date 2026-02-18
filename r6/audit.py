@@ -19,6 +19,9 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
     """
     Record an audit event for a FHIR operation.
 
+    Uses a nested transaction (SAVEPOINT) so that audit failures
+    do not roll back the caller's already-committed work.
+
     Args:
         event_type: Type of event (read, create, update, delete, validate)
         resource_type: FHIR resource type involved
@@ -29,6 +32,7 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
         detail: Additional detail text
     """
     try:
+        nested = db.session.begin_nested()
         audit = AuditEventRecord(
             event_type=event_type,
             resource_type=resource_type,
@@ -39,6 +43,7 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
             detail=detail
         )
         db.session.add(audit)
+        nested.commit()
         db.session.commit()
         logger.debug(
             f'AuditEvent recorded: {event_type} on {resource_type}/{resource_id} '
@@ -46,5 +51,8 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
         )
     except Exception as e:
         logger.error(f'Failed to record audit event: {e}')
-        # Don't fail the main operation if audit logging fails
-        db.session.rollback()
+        # Roll back only the nested savepoint, not the caller's transaction
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
