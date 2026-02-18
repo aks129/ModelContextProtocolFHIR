@@ -1,7 +1,7 @@
 [project]
-name = "repl-nix-workspace"
-version = "0.1.0"
-description = "Add your description here"
+name = "fhir-mcp-r6-showcase"
+version = "0.2.0"
+description = "R6-only Agent-First FHIR Server Showcase with MCP"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.49.0",
@@ -12,4 +12,9 @@ dependencies = [
     "marshmallow>=3.26.1",
     "psycopg2-binary>=2.9.10",
     "requests>=2.32.3",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4.0",
 ]

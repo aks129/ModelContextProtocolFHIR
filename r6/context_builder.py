@@ -1,0 +1,210 @@
+"""
+Context Builder Service.
+
+Ingests patient-centric Bundles and constructs bounded "context envelopes"
+with retention, redaction, and caching support.
+"""
+
+import json
+import hashlib
+import logging
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+from models import db
+from r6.models import R6Resource, ContextEnvelope, ContextItem
+
+logger = logging.getLogger(__name__)
+
+# Default context TTL in minutes
+DEFAULT_CONTEXT_TTL_MINUTES = 30
+
+# Default temporal window in days
+DEFAULT_WINDOW_DAYS = 90
+
+
+class ContextBuilder:
+    """Builds bounded context envelopes from FHIR Bundles."""
+
+    def __init__(self, default_ttl_minutes=DEFAULT_CONTEXT_TTL_MINUTES,
+                 default_window_days=DEFAULT_WINDOW_DAYS):
+        self.default_ttl_minutes = default_ttl_minutes
+        self.default_window_days = default_window_days
+
+    def ingest_bundle(self, bundle, tenant_id=None):
+        """
+        Ingest a FHIR Bundle, store resources, and build a context envelope.
+
+        Args:
+            bundle: A FHIR Bundle resource (dict)
+            tenant_id: Optional tenant identifier
+
+        Returns:
+            dict with context_id, resource_count, and envelope summary
+        """
+        entries = bundle.get('entry', [])
+        if not entries:
+            raise ValueError('Bundle contains no entries')
+
+        # Find the patient anchor
+        patient_ref = self._find_patient_ref(entries)
+        encounter_ref = self._find_encounter_ref(entries)
+
+        # Store resources and collect items
+        stored_resources = []
+        context_items = []
+
+        for entry in entries:
+            resource = entry.get('resource')
+            if not resource:
+                continue
+
+            resource_type = resource.get('resourceType')
+            if not resource_type or not R6Resource.is_supported_type(resource_type):
+                logger.debug(f'Skipping unsupported resource type: {resource_type}')
+                continue
+
+            # Apply redaction before storage
+            redacted = self._apply_redaction(resource)
+            resource_json = json.dumps(redacted, separators=(',', ':'), sort_keys=True)
+
+            # Create or update the resource
+            resource_id = resource.get('id', str(uuid.uuid4()))
+            existing = R6Resource.query.filter_by(
+                id=resource_id, resource_type=resource_type
+            ).first()
+
+            if existing:
+                existing.update_resource(resource_json)
+                r6_resource = existing
+            else:
+                r6_resource = R6Resource(
+                    resource_type=resource_type,
+                    resource_json=resource_json,
+                    resource_id=resource_id,
+                    tenant_id=tenant_id
+                )
+                db.session.add(r6_resource)
+
+            stored_resources.append(r6_resource)
+
+            # Build context item
+            slice_name = self._determine_slice(resource_type)
+            context_items.append({
+                'resource_ref': f'{resource_type}/{r6_resource.id}',
+                'resource_version': str(r6_resource.version_id),
+                'slice_name': slice_name,
+                'sha256': r6_resource.sha256
+            })
+
+        # Create context envelope
+        now = datetime.now(timezone.utc)
+        envelope = ContextEnvelope(
+            tenant_id=tenant_id,
+            patient_ref=patient_ref or 'unknown',
+            encounter_ref=encounter_ref,
+            window_start=now - timedelta(days=self.default_window_days),
+            window_end=now,
+            redaction_profile='standard',
+            consent_decision='permit',
+            expires_at=now + timedelta(minutes=self.default_ttl_minutes)
+        )
+        db.session.add(envelope)
+        db.session.flush()  # Get the context_id
+
+        # Add context items
+        for item_data in context_items:
+            item = ContextItem(
+                context_id=envelope.context_id,
+                resource_ref=item_data['resource_ref'],
+                resource_version=item_data['resource_version'],
+                slice_name=item_data['slice_name'],
+                sha256=item_data['sha256']
+            )
+            db.session.add(item)
+
+        db.session.commit()
+
+        return {
+            'context_id': envelope.context_id,
+            'patient_ref': patient_ref,
+            'encounter_ref': encounter_ref,
+            'resource_count': len(stored_resources),
+            'expires_at': envelope.expires_at.isoformat(),
+            'items': context_items
+        }
+
+    def _find_patient_ref(self, entries):
+        """Find the patient reference from Bundle entries."""
+        for entry in entries:
+            resource = entry.get('resource', {})
+            if resource.get('resourceType') == 'Patient':
+                rid = resource.get('id', '')
+                return f'Patient/{rid}' if rid else None
+            # Check subject references in other resources
+            subject = resource.get('subject', {})
+            if isinstance(subject, dict) and 'reference' in subject:
+                ref = subject['reference']
+                if ref.startswith('Patient/'):
+                    return ref
+        return None
+
+    def _find_encounter_ref(self, entries):
+        """Find the encounter reference from Bundle entries."""
+        for entry in entries:
+            resource = entry.get('resource', {})
+            if resource.get('resourceType') == 'Encounter':
+                rid = resource.get('id', '')
+                return f'Encounter/{rid}' if rid else None
+        return None
+
+    def _determine_slice(self, resource_type):
+        """Determine the context slice name for a resource type."""
+        slices = {
+            'Patient': 'demographics',
+            'Encounter': 'encounters',
+            'Observation': 'observations',
+            'Consent': 'consent',
+            'AuditEvent': 'audit',
+        }
+        return slices.get(resource_type, 'other')
+
+    def _apply_redaction(self, resource):
+        """
+        Apply standard redaction profile to a resource.
+        Removes free-text notes, full identifiers (keep last 4),
+        and addresses for privacy.
+        """
+        redacted = json.loads(json.dumps(resource))  # Deep copy
+
+        # Remove text narratives
+        if 'text' in redacted:
+            redacted['text'] = {
+                'status': 'empty',
+                'div': '<div xmlns="http://www.w3.org/1999/xhtml">[Redacted]</div>'
+            }
+
+        # Redact identifiers (keep last 4 characters)
+        if 'identifier' in redacted and isinstance(redacted['identifier'], list):
+            for ident in redacted['identifier']:
+                if 'value' in ident and isinstance(ident['value'], str):
+                    val = ident['value']
+                    if len(val) > 4:
+                        ident['value'] = '***' + val[-4:]
+
+        # Remove full addresses
+        if 'address' in redacted and isinstance(redacted['address'], list):
+            for addr in redacted['address']:
+                addr.pop('line', None)
+                addr.pop('text', None)
+                # Keep city, state, country for demographics
+
+        # Remove notes/comments
+        for field in ['note', 'comment']:
+            if field in redacted:
+                if isinstance(redacted[field], list):
+                    redacted[field] = [{'text': '[Redacted]'}]
+                elif isinstance(redacted[field], str):
+                    redacted[field] = '[Redacted]'
+
+        return redacted

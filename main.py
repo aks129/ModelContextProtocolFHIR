@@ -29,8 +29,15 @@ db.init_app(app)
 with app.app_context():
     # Import models to ensure they're registered
     from models import FHIRServerConfig, RequestLog
+    # Import R6 models to register them with SQLAlchemy
+    from r6.models import R6Resource, ContextEnvelope, ContextItem, AuditEventRecord
     db.create_all()
-    logger.info("Database tables created successfully")
+    logger.info("Database tables created successfully (including R6 tables)")
+
+# Register the R6 FHIR Blueprint
+from r6.routes import r6_blueprint
+app.register_blueprint(r6_blueprint)
+logger.info("R6 FHIR Blueprint registered at /r6/fhir")
 
 # Import routes after initializing the app to avoid circular imports
 from app import *
