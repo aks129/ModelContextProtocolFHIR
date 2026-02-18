@@ -2,10 +2,10 @@
 Enhanced Claude Client for Agent Orchestration.
 
 Supports:
-- 1M-token context window via anthropic-beta header
+- 1M-token context window via anthropic-beta header (enabled by default)
 - Prompt caching with cache_control markers
 - Tool loop with correct tool_result formatting
-- Programmatic tool calling for multi-step workflows
+- Routes tool calls through the MCP orchestrator server when available
 """
 
 import os
@@ -122,11 +122,25 @@ AGENT_TOOLS = [
 class AgentClient:
     """Claude-powered agent client with tool loop support."""
 
-    def __init__(self, api_key=None, enable_1m_context=False):
+    def __init__(self, api_key=None, enable_1m_context=True,
+                 mcp_server_url=None):
+        """
+        Initialize the agent client.
+
+        Args:
+            api_key: Anthropic API key (or ANTHROPIC_API_KEY env var)
+            enable_1m_context: Enable 1M-token context window (default: True)
+            mcp_server_url: MCP orchestrator URL (or MCP_SERVER_URL env var).
+                           When set, tool calls route through the MCP server.
+        """
         self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
         self.client = None
         self.enable_1m_context = enable_1m_context
         self.model = 'claude-opus-4-6'
+        self.mcp_server_url = (
+            mcp_server_url
+            or os.environ.get('MCP_SERVER_URL', 'http://localhost:3001')
+        )
         self._initialize()
 
     def _initialize(self):
@@ -134,7 +148,10 @@ class AgentClient:
         if self.api_key:
             try:
                 self.client = Anthropic(api_key=self.api_key)
-                logger.info('AgentClient initialized')
+                logger.info(
+                    f'AgentClient initialized (1M context: {self.enable_1m_context}, '
+                    f'MCP server: {self.mcp_server_url})'
+                )
             except Exception as e:
                 logger.error(f'Failed to initialize AgentClient: {e}')
 
@@ -153,7 +170,9 @@ class AgentClient:
         Args:
             user_message: The user's question or instruction
             context_id: Optional context envelope ID for grounding
-            tool_executor: Callable(tool_name, tool_input) -> tool_result
+            tool_executor: Callable(tool_name, tool_input) -> tool_result.
+                          If None, uses create_mcp_tool_executor() to route
+                          through the MCP orchestrator.
             max_turns: Maximum number of tool-use round trips
 
         Returns:
@@ -266,7 +285,7 @@ class AgentClient:
             }
         ]
 
-        # 1M context beta header
+        # 1M context beta header (enabled by default)
         if self.enable_1m_context:
             kwargs["extra_headers"] = {
                 "anthropic-beta": "context-1m-2025-08-07"
@@ -274,29 +293,103 @@ class AgentClient:
 
         return kwargs
 
-    def create_tool_executor(self, app, base_url='http://localhost:5000'):
+    def create_mcp_tool_executor(self, tenant_id=None, step_up_token=None):
         """
-        Create a tool executor function that calls the R6 FHIR endpoints.
+        Create a tool executor that routes calls through the MCP orchestrator.
+
+        The MCP server uses the @modelcontextprotocol/sdk with SSE transport.
+        This executor uses the legacy HTTP bridge endpoint for synchronous calls.
 
         Args:
-            app: Flask app instance (for app context)
-            base_url: Base URL of the FHIR server
+            tenant_id: Tenant ID for request headers
+            step_up_token: Optional step-up token for write operations
 
         Returns:
             Callable tool executor
         """
         import requests as http_requests
 
+        mcp_url = self.mcp_server_url
+
+        def executor(tool_name, tool_input):
+            # Map agent tool names to MCP tool names
+            mcp_name_map = {
+                'context_get': 'context.get',
+                'fhir_read': 'fhir.read',
+                'fhir_search': 'fhir.search',
+                'fhir_validate': 'fhir.validate',
+                'fhir_propose_write': 'fhir.propose_write',
+            }
+            mcp_tool_name = mcp_name_map.get(tool_name, tool_name)
+
+            # Build JSON-RPC request for the MCP server's HTTP bridge
+            rpc_request = {
+                'jsonrpc': '2.0',
+                'id': 1,
+                'method': 'tools/call',
+                'params': {
+                    'name': mcp_tool_name,
+                    'arguments': tool_input,
+                }
+            }
+            if step_up_token:
+                rpc_request['params']['stepUpToken'] = step_up_token
+
+            headers = {'Content-Type': 'application/json'}
+            if tenant_id:
+                headers['X-Tenant-Id'] = tenant_id
+
+            try:
+                resp = http_requests.post(
+                    f'{mcp_url}/mcp/rpc',
+                    json=rpc_request,
+                    headers=headers,
+                    timeout=30
+                )
+                resp.raise_for_status()
+                rpc_response = resp.json()
+                if 'error' in rpc_response:
+                    return {'error': rpc_response['error'].get('message', 'RPC error')}
+                return rpc_response.get('result', {})
+            except http_requests.ConnectionError:
+                logger.warning(f'MCP server unavailable at {mcp_url}, falling back to direct call')
+                return {"error": f"MCP server unavailable at {mcp_url}"}
+            except Exception as e:
+                return {"error": str(e)}
+
+        return executor
+
+    def create_direct_tool_executor(self, base_url='http://localhost:5000',
+                                    tenant_id=None):
+        """
+        Create a tool executor that calls the R6 FHIR endpoints directly.
+        Fallback when MCP orchestrator is unavailable.
+
+        Args:
+            base_url: Base URL of the FHIR server
+            tenant_id: Tenant ID for request headers
+
+        Returns:
+            Callable tool executor
+        """
+        import requests as http_requests
+
+        headers = {}
+        if tenant_id:
+            headers['X-Tenant-Id'] = tenant_id
+
         def executor(tool_name, tool_input):
             if tool_name == 'context_get':
                 resp = http_requests.get(
-                    f'{base_url}/r6/fhir/context/{tool_input["context_id"]}'
+                    f'{base_url}/r6/fhir/context/{tool_input["context_id"]}',
+                    headers=headers
                 )
                 return resp.json()
 
             elif tool_name == 'fhir_read':
                 resp = http_requests.get(
-                    f'{base_url}/r6/fhir/{tool_input["resource_type"]}/{tool_input["resource_id"]}'
+                    f'{base_url}/r6/fhir/{tool_input["resource_type"]}/{tool_input["resource_id"]}',
+                    headers=headers
                 )
                 return resp.json()
 
@@ -308,26 +401,32 @@ class AgentClient:
                     params['_count'] = tool_input['count']
                 resp = http_requests.get(
                     f'{base_url}/r6/fhir/{tool_input["resource_type"]}',
-                    params=params
+                    params=params,
+                    headers=headers
                 )
                 return resp.json()
 
             elif tool_name == 'fhir_validate':
                 resource = tool_input['resource']
-                resource_type = resource.get('resourceType', 'Patient')
+                resource_type = resource.get('resourceType')
+                if not resource_type:
+                    return {"error": "Resource must have a resourceType"}
                 resp = http_requests.post(
                     f'{base_url}/r6/fhir/{resource_type}/$validate',
-                    json=resource
+                    json=resource,
+                    headers=headers
                 )
                 return resp.json()
 
             elif tool_name == 'fhir_propose_write':
                 resource = tool_input['resource']
-                resource_type = resource.get('resourceType', 'Patient')
-                # First validate
+                resource_type = resource.get('resourceType')
+                if not resource_type:
+                    return {"error": "Resource must have a resourceType"}
                 val_resp = http_requests.post(
                     f'{base_url}/r6/fhir/{resource_type}/$validate',
-                    json=resource
+                    json=resource,
+                    headers=headers
                 )
                 validation = val_resp.json()
                 return {

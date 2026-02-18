@@ -21,6 +21,8 @@ from r6.models import R6Resource, ContextEnvelope, AuditEventRecord
 from r6.context_builder import ContextBuilder
 from r6.validator import R6Validator
 from r6.audit import record_audit_event
+from r6.redaction import apply_redaction
+from r6.stepup import validate_step_up_token
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,34 @@ validator = R6Validator()
 # Valid FHIR id pattern
 _FHIR_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-.]{1,64}$')
 
+# AuditEvent is system-managed — block external CRUD
+_SYSTEM_MANAGED_TYPES = {'AuditEvent'}
+
+
+# --- Tenant Enforcement ---
+
+@r6_blueprint.before_request
+def enforce_tenant_id():
+    """Require X-Tenant-Id header on all endpoints except metadata and health."""
+    # Metadata is public / capability discovery
+    if request.path.endswith('/metadata'):
+        return None
+    tenant_id = request.headers.get('X-Tenant-Id')
+    if not tenant_id:
+        return jsonify({
+            'resourceType': 'OperationOutcome',
+            'issue': [{
+                'severity': 'error',
+                'code': 'security',
+                'diagnostics': 'X-Tenant-Id header is required'
+            }]
+        }), 400
+
 
 @r6_blueprint.route('/metadata', methods=['GET'])
 def r6_metadata():
     """
     Return an R6 CapabilityStatement with fhirVersion set.
-    The R6 versioning guidance uses fhirVersion in CapabilityStatement
-    as the primary way to determine version.
     """
     capability_statement = {
         'resourceType': 'CapabilityStatement',
@@ -54,7 +77,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Showcase',
-            'version': '0.1.0'
+            'version': '0.2.0'
         },
         'implementation': {
             'description': 'R6-only Agent-First FHIR Server Showcase',
@@ -108,6 +131,11 @@ def create_resource(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
+    # Block external creation of system-managed resources
+    if resource_type in _SYSTEM_MANAGED_TYPES:
+        return _operation_outcome('error', 'security',
+                                  f'{resource_type} is system-managed and cannot be created via API'), 403
+
     body = request.get_json(silent=True)
     if not body:
         return _operation_outcome('error', 'invalid', 'Request body must be valid JSON'), 400
@@ -116,11 +144,17 @@ def create_resource(resource_type):
         return _operation_outcome('error', 'invalid',
                                   f'resourceType mismatch: expected {resource_type}'), 400
 
-    # Step-up authorization check
+    # Step-up authorization check with HMAC validation
+    tenant_id = request.headers.get('X-Tenant-Id')
     step_up_token = request.headers.get('X-Step-Up-Token')
     if not step_up_token:
         return _operation_outcome('error', 'security',
                                   'Write operations require X-Step-Up-Token header'), 403
+
+    valid, err = validate_step_up_token(step_up_token, tenant_id)
+    if not valid:
+        return _operation_outcome('error', 'security',
+                                  f'Step-up token rejected: {err}'), 403
 
     # Validate before storing (agent proposals must pass $validate before commit)
     validation_result = validator.validate_resource(body)
@@ -138,7 +172,7 @@ def create_resource(resource_type):
         resource_type=resource_type,
         resource_json=resource_json,
         resource_id=client_id,
-        tenant_id=request.headers.get('X-Tenant-Id')
+        tenant_id=tenant_id
     )
 
     try:
@@ -162,13 +196,16 @@ def create_resource(resource_type):
 
 @r6_blueprint.route('/<resource_type>/<resource_id>', methods=['GET'])
 def read_resource(resource_type, resource_id):
-    """Read a specific R6 FHIR resource."""
+    """Read a specific R6 FHIR resource (redacted)."""
     if not R6Resource.is_supported_type(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
+    # Enforce tenant isolation on reads
+    tenant_id = request.headers.get('X-Tenant-Id')
     resource = R6Resource.query.filter_by(
-        id=resource_id, resource_type=resource_type, is_deleted=False
+        id=resource_id, resource_type=resource_type,
+        is_deleted=False, tenant_id=tenant_id
     ).first()
 
     if not resource:
@@ -179,7 +216,11 @@ def read_resource(resource_type, resource_id):
                        agent_id=request.headers.get('X-Agent-Id'),
                        context_id=request.headers.get('X-Context-Id'))
 
-    response = jsonify(resource.to_fhir_json())
+    # Apply redaction on all reads — consistent with context envelope behavior
+    fhir_json = resource.to_fhir_json()
+    redacted = apply_redaction(fhir_json)
+
+    response = jsonify(redacted)
     response.headers['ETag'] = f'W/"{resource.version_id}"'
     return response
 
@@ -191,10 +232,22 @@ def update_resource(resource_type, resource_id):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
+    # Block updates to system-managed resources
+    if resource_type in _SYSTEM_MANAGED_TYPES:
+        return _operation_outcome('error', 'security',
+                                  f'{resource_type} is system-managed and cannot be modified via API'), 403
+
+    # Step-up authorization with HMAC validation
+    tenant_id = request.headers.get('X-Tenant-Id')
     step_up_token = request.headers.get('X-Step-Up-Token')
     if not step_up_token:
         return _operation_outcome('error', 'security',
                                   'Write operations require X-Step-Up-Token header'), 403
+
+    valid, err = validate_step_up_token(step_up_token, tenant_id)
+    if not valid:
+        return _operation_outcome('error', 'security',
+                                  f'Step-up token rejected: {err}'), 403
 
     body = request.get_json(silent=True)
     if not body:
@@ -210,8 +263,10 @@ def update_resource(resource_type, resource_id):
         return _operation_outcome('error', 'invalid',
                                   f'Resource id in body ({body["id"]}) does not match URL ({resource_id})'), 400
 
+    # Enforce tenant isolation
     resource = R6Resource.query.filter_by(
-        id=resource_id, resource_type=resource_type, is_deleted=False
+        id=resource_id, resource_type=resource_type,
+        is_deleted=False, tenant_id=tenant_id
     ).first()
 
     if not resource:
@@ -253,28 +308,27 @@ def search_resources(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
+    # Always enforce tenant isolation (mandatory since before_request ensures it exists)
+    tenant_id = request.headers.get('X-Tenant-Id')
     query = R6Resource.query.filter_by(
-        resource_type=resource_type, is_deleted=False
+        resource_type=resource_type, is_deleted=False, tenant_id=tenant_id
     )
 
     # Basic search: patient reference with sanitized input
     patient_ref = request.args.get('patient')
     if patient_ref:
-        # Validate patient ref format and escape LIKE wildcards
         sanitized = patient_ref.replace('%', '').replace('_', '')
         if sanitized:
             query = query.filter(R6Resource.resource_json.contains(sanitized))
 
     context_id = request.args.get('context-id')
-    tenant_id = request.headers.get('X-Tenant-Id')
-    if tenant_id:
-        query = query.filter_by(tenant_id=tenant_id)
 
-    # Clamp _count to [1, 200] to prevent negative/zero bypass
+    # Clamp _count to [1, 200]
     count = request.args.get('_count', 50, type=int)
     count = max(1, min(count, 200))
     resources = query.limit(count).all()
 
+    # Apply redaction on all search results
     bundle = {
         'resourceType': 'Bundle',
         'type': 'searchset',
@@ -282,7 +336,7 @@ def search_resources(resource_type):
         'entry': [
             {
                 'fullUrl': f'{request.host_url.rstrip("/")}/r6/fhir/{resource_type}/{r.id}',
-                'resource': r.to_fhir_json()
+                'resource': apply_redaction(r.to_fhir_json())
             }
             for r in resources
         ]
@@ -302,7 +356,6 @@ def search_resources(resource_type):
 def validate_resource(resource_type):
     """
     Validate a proposed FHIR R6 resource.
-    R6 defines $validate semantics for create/update/delete.
     Returns an OperationOutcome.
     """
     if not R6Resource.is_supported_type(resource_type):
@@ -332,7 +385,6 @@ def validate_resource(resource_type):
 def ingest_context():
     """
     Accept a small Bundle, store resources, and build a context envelope.
-    This is the MVP ingestion endpoint for the agent showcase.
     """
     body = request.get_json(silent=True)
     if not body or body.get('resourceType') != 'Bundle':
@@ -422,8 +474,6 @@ def search_audit_events():
 def import_stub():
     """
     R4/R5 import stub: accept Bundle + annotate "needs transform".
-    This is explicitly non-production due to R6 ballot transform caveats.
-    Cross-version transforms are "not consistently updated" for the ballot.
     """
     body = request.get_json(silent=True)
     if not body or body.get('resourceType') != 'Bundle':

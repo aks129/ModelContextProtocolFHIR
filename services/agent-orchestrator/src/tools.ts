@@ -17,11 +17,29 @@ interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+// MCP SDK tool schema format
+interface MCPToolSchema {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
 export class FHIRTools {
   private baseUrl: string;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+  }
+
+  /**
+   * Return tool schemas in MCP SDK format (for ListToolsRequestSchema handler).
+   */
+  getMCPToolSchemas(): MCPToolSchema[] {
+    return this.getToolSchemas().map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
   }
 
   getToolSchemas(): ToolDefinition[] {

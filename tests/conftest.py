@@ -8,6 +8,10 @@ import pytest
 # Set test environment before importing app — prevents file-based DB creation
 os.environ['TESTING'] = '1'
 os.environ['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+os.environ['STEP_UP_SECRET'] = 'test-secret-for-hmac-validation'
+
+# Standard tenant ID for all tests
+TEST_TENANT_ID = 'test-tenant'
 
 
 @pytest.fixture
@@ -28,6 +32,34 @@ def app():
 def client(app):
     """Create a test client."""
     return app.test_client()
+
+
+@pytest.fixture
+def tenant_id():
+    """Test tenant identifier."""
+    return TEST_TENANT_ID
+
+
+@pytest.fixture
+def step_up_token(tenant_id):
+    """Generate a valid HMAC-signed step-up token for test tenant."""
+    from r6.stepup import generate_step_up_token
+    return generate_step_up_token(tenant_id)
+
+
+@pytest.fixture
+def auth_headers(tenant_id, step_up_token):
+    """Headers for authenticated write operations."""
+    return {
+        'X-Tenant-Id': tenant_id,
+        'X-Step-Up-Token': step_up_token,
+    }
+
+
+@pytest.fixture
+def tenant_headers(tenant_id):
+    """Headers for read operations (tenant only, no step-up)."""
+    return {'X-Tenant-Id': tenant_id}
 
 
 @pytest.fixture

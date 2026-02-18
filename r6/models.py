@@ -129,6 +129,9 @@ class AuditEventRecord(db.Model):
     AuditEvent records for FHIR resource access.
     R6 defines AuditEvent as a record of events relevant for
     operations, privacy, security, maintenance, and performance.
+
+    APPEND-ONLY: AuditEvents are immutable legal records.
+    Updates and deletes are blocked at the model level.
     """
     __tablename__ = 'audit_events'
 
@@ -200,3 +203,17 @@ class AuditEventRecord(db.Model):
             'delete': 'D', 'validate': 'E'
         }
         return mapping.get(self.event_type, 'E')
+
+
+# --- Append-only enforcement for AuditEvent ---
+# These listeners fire on Session.delete() and dirty flush, preventing
+# programmatic mutation of audit records. DROP TABLE (test teardown) is unaffected.
+
+@db.event.listens_for(AuditEventRecord, 'before_update')
+def _prevent_audit_update(mapper, connection, target):
+    raise RuntimeError('AuditEvent records are immutable and cannot be updated')
+
+
+@db.event.listens_for(AuditEventRecord, 'before_delete')
+def _prevent_audit_delete(mapper, connection, target):
+    raise RuntimeError('AuditEvent records are immutable and cannot be deleted')
