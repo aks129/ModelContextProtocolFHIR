@@ -1,6 +1,6 @@
 {
-  "name": "fhir-r6-agent-orchestrator",
-  "version": "0.2.0",
+  "name": "fhir-r6-mcp",
+  "version": "0.3.0",
   "description": "MCP server for FHIR R6 agent orchestration with Claude",
   "main": "dist/index.js",
   "scripts": {

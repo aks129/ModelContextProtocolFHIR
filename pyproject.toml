@@ -1,6 +1,6 @@
 [project]
 name = "fhir-mcp-r6-showcase"
-version = "0.2.0"
+version = "0.3.0"
 description = "R6-only Agent-First FHIR Server Showcase with MCP"
 requires-python = ">=3.11"
 dependencies = [

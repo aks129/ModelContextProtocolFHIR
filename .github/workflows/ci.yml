@@ -76,11 +76,34 @@ jobs:
         run: |
           curl -sf -X POST http://localhost:5000/r6/fhir/Patient/\$validate \
             -H 'Content-Type: application/json' \
+            -H 'X-Tenant-Id: smoke-test' \
             -d '{"resourceType": "Patient", "name": [{"family": "Test"}]}' | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           assert data['resourceType'] == 'OperationOutcome'
           print('Validate smoke test passed')
+          "
+
+      - name: Smoke test - Privacy policy
+        run: |
+          curl -sf http://localhost:5000/r6/fhir/docs/privacy-policy \
+            -H 'X-Tenant-Id: smoke-test' | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert 'medical_disclaimer' in data
+          assert 'data_protection' in data
+          print('Privacy policy smoke test passed')
+          "
+
+      - name: Smoke test - OAuth discovery
+        run: |
+          curl -sf http://localhost:5000/r6/fhir/.well-known/oauth-authorization-server \
+            | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert 'authorization_endpoint' in data
+          assert 'S256' in data.get('code_challenge_methods_supported', [])
+          print('OAuth discovery smoke test passed')
           "
 
       - name: Cleanup

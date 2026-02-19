@@ -11,6 +11,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - FHIR_VALIDATOR_URL=${FHIR_VALIDATOR_URL:-http://localhost:8080}
       - REDIS_URL=redis://redis:6379/0
+      - STEP_UP_SECRET=${STEP_UP_SECRET:-dev-step-up-secret-change-in-production}
     depends_on:
       - redis
     volumes:
@@ -33,6 +34,8 @@ services:
     environment:
       - MCP_PORT=3001
       - FHIR_BASE_URL=http://fhir-r6-showcase:5000/r6/fhir
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-120}
     depends_on:
       - fhir-r6-showcase
     networks:

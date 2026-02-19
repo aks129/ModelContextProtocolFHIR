@@ -9,13 +9,17 @@ Provides an R6-only REST surface with:
 - /r6/fhir/Bundle/$ingest-context (POST bundle ingestion)
 - /r6/fhir/AuditEvent (GET search by contextId)
 - /r6/fhir/$import-stub (POST cross-version import stub)
+- /r6/fhir/oauth/* (OAuth 2.1 + SMART-on-FHIR)
+- /r6/fhir/AuditEvent/$export (NDJSON audit trail export)
+- /r6/fhir/{type}/{id}/$deidentify (Safe Harbor de-identification)
 """
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from models import db
 from r6.models import R6Resource, ContextEnvelope, AuditEventRecord
 from r6.context_builder import ContextBuilder
@@ -23,10 +27,22 @@ from r6.validator import R6Validator
 from r6.audit import record_audit_event
 from r6.redaction import apply_redaction
 from r6.stepup import validate_step_up_token
+from r6.oauth import register_oauth_routes
+from r6.rate_limit import rate_limit_middleware
+from r6.health_compliance import (
+    add_disclaimer, enforce_human_in_loop, deidentify_resource,
+    export_audit_trail, MEDICAL_DISCLAIMER
+)
 
 logger = logging.getLogger(__name__)
 
 r6_blueprint = Blueprint('r6', __name__, url_prefix='/r6/fhir')
+
+# Register OAuth 2.1 endpoints
+register_oauth_routes(r6_blueprint)
+
+# Register rate limiting
+rate_limit_middleware(r6_blueprint)
 
 # R6 version identifier aligned with ballot build
 R6_FHIR_VERSION = '6.0.0-ballot3'
@@ -46,9 +62,13 @@ _SYSTEM_MANAGED_TYPES = {'AuditEvent'}
 
 @r6_blueprint.before_request
 def enforce_tenant_id():
-    """Require X-Tenant-Id header on all endpoints except metadata and health."""
-    # Metadata is public / capability discovery
+    """Require X-Tenant-Id header on all endpoints except public discovery."""
+    # Public discovery endpoints (no tenant required)
     if request.path.endswith('/metadata'):
+        return None
+    if '/.well-known/' in request.path:
+        return None
+    if '/oauth/' in request.path:
         return None
     tenant_id = request.headers.get('X-Tenant-Id')
     if not tenant_id:
@@ -519,6 +539,120 @@ def import_stub():
                        detail=f'import-stub from {source_version}, {len(entries)} entries')
 
     return jsonify(result), 202
+
+
+# --- De-identification Endpoint ---
+
+@r6_blueprint.route('/<resource_type>/<resource_id>/$deidentify', methods=['GET'])
+def deidentify_endpoint(resource_type, resource_id):
+    """Return a HIPAA Safe Harbor de-identified copy of a resource."""
+    if not R6Resource.is_supported_type(resource_type):
+        return _operation_outcome('error', 'not-supported',
+                                  f'Resource type {resource_type} is not supported'), 400
+
+    tenant_id = request.headers.get('X-Tenant-Id')
+    resource = R6Resource.query.filter_by(
+        id=resource_id, resource_type=resource_type,
+        is_deleted=False, tenant_id=tenant_id
+    ).first()
+
+    if not resource:
+        return _operation_outcome('error', 'not-found',
+                                  f'{resource_type}/{resource_id} not found'), 404
+
+    record_audit_event('read', resource_type, resource_id,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       detail='de-identification export')
+
+    fhir_json = resource.to_fhir_json()
+    deidentified = deidentify_resource(fhir_json)
+
+    return jsonify(deidentified)
+
+
+# --- Audit Trail Export ---
+
+@r6_blueprint.route('/AuditEvent/$export', methods=['GET'])
+def export_audit():
+    """
+    Export audit trail in NDJSON or FHIR Bundle format.
+    Supports date range filtering.
+    """
+    fmt = request.args.get('_format', 'ndjson')
+    context_id = request.args.get('context-id')
+    count = request.args.get('_count', 1000, type=int)
+    count = max(1, min(count, 10000))
+
+    query = AuditEventRecord.query.order_by(AuditEventRecord.recorded.desc())
+
+    if context_id:
+        query = query.filter_by(context_id=context_id)
+
+    records = query.limit(count).all()
+
+    record_audit_event('read', 'AuditEvent', None,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       detail=f'audit export: {len(records)} records, format={fmt}')
+
+    content = export_audit_trail(records, format=fmt)
+
+    if fmt == 'fhir-bundle':
+        return Response(content, mimetype='application/fhir+json')
+    else:
+        return Response(content, mimetype='application/x-ndjson',
+                       headers={'Content-Disposition': 'attachment; filename=audit-trail.ndjson'})
+
+
+# --- Privacy Policy & Disclaimer Endpoint ---
+
+@r6_blueprint.route('/docs/privacy-policy', methods=['GET'])
+def privacy_policy():
+    """Return the privacy policy and medical disclaimer."""
+    return jsonify({
+        'title': 'FHIR R6 MCP Privacy Policy & Medical Disclaimer',
+        'effective_date': '2026-02-19',
+        'medical_disclaimer': MEDICAL_DISCLAIMER,
+        'data_collection': {
+            'what_we_collect': [
+                'FHIR resource data submitted via API (stored with PHI redaction)',
+                'Audit trail of all resource access (append-only)',
+                'Tenant identifiers and agent identifiers',
+                'OAuth client registration metadata',
+            ],
+            'what_we_do_not_collect': [
+                'User browsing behavior or analytics',
+                'Device fingerprints',
+                'Location data beyond what is in FHIR resources',
+            ],
+        },
+        'data_protection': {
+            'redaction': 'PHI redaction applied on all read paths (identifiers, addresses, telecom)',
+            'de_identification': 'HIPAA Safe Harbor de-identification available via $deidentify operation',
+            'encryption': 'TLS required for all production deployments',
+            'audit_trail': 'Immutable, append-only AuditEvent records for all operations',
+            'tenant_isolation': 'Mandatory tenant-scoped data isolation on all queries',
+        },
+        'data_retention': {
+            'context_envelopes': 'Default TTL 30 minutes (configurable)',
+            'fhir_resources': 'Retained until explicitly deleted',
+            'audit_events': 'Retained indefinitely (compliance requirement)',
+        },
+        'data_sharing': {
+            'policy': 'FHIR data is never shared with third parties',
+            'ai_training': 'Data is never used for AI model training',
+            'advertising': 'Data is never used for advertising',
+        },
+        'compliance': {
+            'hipaa': 'BAA-ready architecture with zero-retention API option',
+            'smart_on_fhir': 'SMART App Launch v2 compliant OAuth scopes',
+            'fhir_version': 'R6 v6.0.0-ballot3',
+        },
+        'contact': {
+            'support': 'https://github.com/aks129/ModelContextProtocolFHIR/issues',
+            'maintainer': 'FHIR IQ / Eugene Vestel',
+            'website': 'https://www.fhiriq.com',
+        },
+    })
 
 
 # --- Helper Functions ---
