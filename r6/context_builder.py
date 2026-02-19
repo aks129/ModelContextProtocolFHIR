@@ -1,0 +1,182 @@
+"""
+Context Builder Service.
+
+Ingests patient-centric Bundles and constructs bounded "context envelopes"
+with retention, redaction, and caching support.
+"""
+
+import json
+import hashlib
+import logging
+import uuid
+from datetime import datetime, timedelta, timezone
+from models import db
+from r6.models import R6Resource, ContextEnvelope, ContextItem
+
+logger = logging.getLogger(__name__)
+
+# Default context TTL in minutes
+DEFAULT_CONTEXT_TTL_MINUTES = 30
+
+# Default temporal window in days
+DEFAULT_WINDOW_DAYS = 90
+
+
+class ContextBuilder:
+    """Builds bounded context envelopes from FHIR Bundles."""
+
+    def __init__(self, default_ttl_minutes=DEFAULT_CONTEXT_TTL_MINUTES,
+                 default_window_days=DEFAULT_WINDOW_DAYS):
+        self.default_ttl_minutes = default_ttl_minutes
+        self.default_window_days = default_window_days
+
+    def ingest_bundle(self, bundle, tenant_id=None):
+        """
+        Ingest a FHIR Bundle, store resources, and build a context envelope.
+
+        Args:
+            bundle: A FHIR Bundle resource (dict)
+            tenant_id: Optional tenant identifier
+
+        Returns:
+            dict with context_id, resource_count, and envelope summary
+
+        Raises:
+            ValueError: If bundle is empty
+            Exception: On database errors (caller should rollback)
+        """
+        entries = bundle.get('entry', [])
+        if not entries:
+            raise ValueError('Bundle contains no entries')
+
+        # Find the patient anchor
+        patient_ref = self._find_patient_ref(entries)
+        encounter_ref = self._find_encounter_ref(entries)
+
+        # Store resources and collect items
+        stored_resources = []
+        context_items = []
+
+        try:
+            for entry in entries:
+                resource = entry.get('resource')
+                if not resource:
+                    continue
+
+                resource_type = resource.get('resourceType')
+                if not resource_type or not R6Resource.is_supported_type(resource_type):
+                    logger.debug(f'Skipping unsupported resource type: {resource_type}')
+                    continue
+
+                # Store canonical JSON (redaction applied at read-time, not write-time)
+                resource_json = json.dumps(resource, separators=(',', ':'), sort_keys=True)
+
+                # Create or update the resource (tenant-scoped)
+                resource_id = resource.get('id', str(uuid.uuid4()))
+                existing = R6Resource.query.filter_by(
+                    id=resource_id, resource_type=resource_type,
+                    tenant_id=tenant_id
+                ).first()
+
+                if existing:
+                    existing.update_resource(resource_json)
+                    r6_resource = existing
+                else:
+                    r6_resource = R6Resource(
+                        resource_type=resource_type,
+                        resource_json=resource_json,
+                        resource_id=resource_id,
+                        tenant_id=tenant_id
+                    )
+                    db.session.add(r6_resource)
+
+                stored_resources.append(r6_resource)
+
+                # Build context item
+                slice_name = self._determine_slice(resource_type)
+                context_items.append({
+                    'resource_ref': f'{resource_type}/{r6_resource.id}',
+                    'resource_version': str(r6_resource.version_id),
+                    'slice_name': slice_name,
+                    'sha256': r6_resource.sha256
+                })
+
+            # Create context envelope
+            now = datetime.now(timezone.utc)
+            envelope = ContextEnvelope(
+                tenant_id=tenant_id,
+                patient_ref=patient_ref or 'unknown',
+                encounter_ref=encounter_ref,
+                window_start=now - timedelta(days=self.default_window_days),
+                window_end=now,
+                redaction_profile='standard',
+                consent_decision='permit',
+                expires_at=now + timedelta(minutes=self.default_ttl_minutes)
+            )
+            db.session.add(envelope)
+            db.session.flush()  # Get the context_id
+
+            # Add context items
+            for item_data in context_items:
+                item = ContextItem(
+                    context_id=envelope.context_id,
+                    resource_ref=item_data['resource_ref'],
+                    resource_version=item_data['resource_version'],
+                    slice_name=item_data['slice_name'],
+                    sha256=item_data['sha256']
+                )
+                db.session.add(item)
+
+            db.session.commit()
+
+            return {
+                'context_id': envelope.context_id,
+                'patient_ref': patient_ref,
+                'encounter_ref': encounter_ref,
+                'resource_count': len(stored_resources),
+                'expires_at': envelope.expires_at.isoformat(),
+                'items': context_items
+            }
+
+        except ValueError:
+            raise  # Re-raise validation errors
+        except Exception:
+            db.session.rollback()
+            raise  # Re-raise after cleanup so caller can handle
+
+    def _find_patient_ref(self, entries):
+        """Find the patient reference from Bundle entries."""
+        for entry in entries:
+            resource = entry.get('resource', {})
+            if resource.get('resourceType') == 'Patient':
+                rid = resource.get('id', '')
+                return f'Patient/{rid}' if rid else None
+            # Check subject references in other resources
+            subject = resource.get('subject', {})
+            if isinstance(subject, dict) and 'reference' in subject:
+                ref = subject['reference']
+                if ref.startswith('Patient/'):
+                    return ref
+        return None
+
+    def _find_encounter_ref(self, entries):
+        """Find the encounter reference from Bundle entries."""
+        for entry in entries:
+            resource = entry.get('resource', {})
+            if resource.get('resourceType') == 'Encounter':
+                rid = resource.get('id', '')
+                return f'Encounter/{rid}' if rid else None
+        return None
+
+    def _determine_slice(self, resource_type):
+        """Determine the context slice name for a resource type."""
+        slices = {
+            'Patient': 'demographics',
+            'Encounter': 'encounters',
+            'Observation': 'observations',
+            'Consent': 'consent',
+            'AuditEvent': 'audit',
+        }
+        return slices.get(resource_type, 'other')
+
+    # Redaction logic is in r6.redaction module (shared with routes)

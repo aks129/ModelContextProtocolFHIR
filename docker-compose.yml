@@ -1,0 +1,57 @@
+services:
+  fhir-r6-showcase:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - SQLALCHEMY_DATABASE_URI=sqlite:///mcp_server.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FHIR_VALIDATOR_URL=${FHIR_VALIDATOR_URL:-http://localhost:8080}
+      - REDIS_URL=redis://redis:6379/0
+      - STEP_UP_SECRET=${STEP_UP_SECRET:-dev-step-up-secret-change-in-production}
+    depends_on:
+      - redis
+    volumes:
+      - ./instance:/app/instance
+    networks:
+      - fhir-net
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - fhir-net
+
+  agent-orchestrator:
+    build:
+      context: ./services/agent-orchestrator
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - MCP_PORT=3001
+      - FHIR_BASE_URL=http://fhir-r6-showcase:5000/r6/fhir
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-120}
+    depends_on:
+      - fhir-r6-showcase
+    networks:
+      - fhir-net
+
+  # HL7 FHIR Validator Wrapper (optional - for full $validate support)
+  # Uncomment when validator-wrapper Docker image is available
+  # validator:
+  #   image: hl7-org/fhir-validator-wrapper:latest
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     - JAVA_OPTS=-Xmx512m
+  #   networks:
+  #     - fhir-net
+
+networks:
+  fhir-net:
+    driver: bridge

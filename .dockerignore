@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.github
+.gitignore
+.claude
+instance/
+*.db
+node_modules
+dist
+.env
+*.md
+tests/
+services/agent-orchestrator/node_modules
+services/agent-orchestrator/dist

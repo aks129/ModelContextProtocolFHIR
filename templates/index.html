@@ -1,74 +1,156 @@
 {% extends "base.html" %}
 
-{% block title %}MCP FHIR Server - Home{% endblock %}
+{% block title %}FHIR R6 MCP Showcase{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-lg-8 mx-auto">
-        <div class="card shadow-sm">
-            <div class="card-header bg-primary text-white">
-                <h1 class="card-title mb-0">
-                    <i class="fas fa-server me-2"></i>Model Context Protocol (MCP) Server
-                </h1>
-            </div>
-            <div class="card-body">
-                <p class="lead">
-                    This server provides a Model Context Protocol (MCP) interface to interact with FHIR servers.
-                </p>
-                
-                <div class="alert alert-info" role="alert">
-                    <h4 class="alert-heading"><i class="fas fa-info-circle me-2"></i>Overview</h4>
-                    <p>The MCP server enables standardized interaction with FHIR (Fast Healthcare Interoperability Resources) servers, 
-                       providing a unified interface for retrieving and working with healthcare data.</p>
-                </div>
-                
-                <h2 class="mt-4"><i class="fas fa-cogs me-2"></i>Key Features</h2>
-                <ul class="list-group mb-4">
-                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Connect to any FHIR API server</li>
-                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Retrieve FHIR resources with read operations</li>
-                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Search FHIR resources with flexible query parameters</li>
-                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>View FHIR server metadata and capabilities</li>
-                    <li class="list-group-item"><i class="fas fa-check-circle text-success me-2"></i>Comprehensive error handling and logging</li>
-                </ul>
-                
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="card mb-3">
-                            <div class="card-header bg-secondary">
-                                <h3 class="card-title h5 mb-0"><i class="fas fa-cog me-2"></i>Configuration</h3>
-                            </div>
-                            <div class="card-body">
-                                <p>Configure your FHIR server connection settings to start using the MCP server.</p>
-                                <a href="{{ url_for('settings') }}" class="btn btn-primary">
-                                    <i class="fas fa-cog me-1"></i>Settings
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card mb-3">
-                            <div class="card-header bg-secondary">
-                                <h3 class="card-title h5 mb-0"><i class="fas fa-book me-2"></i>Documentation</h3>
-                            </div>
-                            <div class="card-body">
-                                <p>View detailed documentation on how to use the MCP server API.</p>
-                                <a href="{{ url_for('documentation') }}" class="btn btn-primary">
-                                    <i class="fas fa-book me-1"></i>Documentation
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <h2 class="mt-4"><i class="fas fa-tools me-2"></i>Getting Started</h2>
-                <ol class="list-group list-group-numbered mb-4">
-                    <li class="list-group-item">Configure your FHIR server connection in <a href="{{ url_for('settings') }}">Settings</a></li>
-                    <li class="list-group-item">Check the server status to ensure proper connection</li>
-                    <li class="list-group-item">Use the <a href="{{ url_for('fhir_explorer') }}">FHIR Explorer</a> to browse resources</li>
-                    <li class="list-group-item">Integrate with the API using the endpoints described in the <a href="{{ url_for('documentation') }}">Documentation</a></li>
-                </ol>
-            </div>
-        </div>
+<div class="r6-hero" style="margin:-1.5rem -12px 2rem;padding:3rem 1.5rem;">
+  <div class="text-center" style="position:relative;z-index:1">
+    <h1 style="font-size:2.5rem;font-weight:800;margin-bottom:0.5rem">
+      <i class="fas fa-fire" style="color:var(--r6-primary)"></i>
+      FHIR R6 Agent-First Showcase
+    </h1>
+    <p class="lead" style="color:var(--r6-text-muted);max-width:700px;margin:0 auto 1.5rem">
+      A minimal, R6-only FHIR server with agent orchestration via Model Context Protocol.
+      Built for conference demos, marketplace evaluation, and prototype validation.
+    </p>
+    <a href="{{ url_for('r6_dashboard') }}" class="r6-btn r6-btn-primary" style="font-size:1rem;padding:0.75rem 2rem">
+      <i class="fas fa-play"></i> Open R6 Dashboard
+    </a>
+  </div>
+</div>
+
+<div class="row g-4 mb-5">
+  <div class="col-md-4">
+    <div class="r6-panel" style="height:100%">
+      <div class="r6-panel-header">
+        <i class="fas fa-robot"></i>
+        <h3>MCP Tool Loop</h3>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem">
+          Six agent tools with read/write tiers:
+          <code>context.get</code>, <code>fhir.read</code>, <code>fhir.search</code>,
+          <code>fhir.validate</code>, <code>fhir.propose_write</code>, <code>fhir.commit_write</code>.
+          Write tools require HMAC step-up authorization.
+        </p>
+      </div>
     </div>
+  </div>
+  <div class="col-md-4">
+    <div class="r6-panel" style="height:100%">
+      <div class="r6-panel-header">
+        <i class="fas fa-shield-alt"></i>
+        <h3>Security</h3>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem">
+          OAuth 2.1 with PKCE, SMART-on-FHIR v2 discovery, mandatory tenant isolation,
+          PHI redaction on all reads, ETag concurrency control, and append-only audit trail.
+        </p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="r6-panel" style="height:100%">
+      <div class="r6-panel-header">
+        <i class="fas fa-heartbeat"></i>
+        <h3>Clinical Safety</h3>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem">
+          Human-in-the-loop enforcement for clinical writes (HTTP 428),
+          medical disclaimer injection, HIPAA Safe Harbor de-identification (45 CFR 164.514(b)).
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mb-5">
+  <div class="col-md-6">
+    <div class="r6-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-layer-group"></i>
+        <h3>Architecture</h3>
+      </div>
+      <div class="r6-panel-body" style="font-size:0.85rem;color:var(--r6-text-muted)">
+        <table style="width:100%">
+          <tr><td style="padding:0.3rem 0"><strong>Flask App</strong></td><td>R6 REST facade at <code>/r6/fhir/*</code></td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>MCP Server</strong></td><td>Node.js orchestrator at port 3001</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Database</strong></td><td>SQLite (dev) / PostgreSQL (prod)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Cache</strong></td><td>Redis for rate limiting</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>FHIR Version</strong></td><td>R6 v6.0.0-ballot3</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Resources</strong></td><td>Patient, Encounter, Observation, Bundle, AuditEvent, Consent, OperationOutcome</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="r6-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-terminal"></i>
+        <h3>Quick Start</h3>
+      </div>
+      <div class="r6-panel-body">
+        <div class="r6-json-output" style="max-height:200px;font-size:0.8rem">
+# Install and run
+uv sync
+python main.py
+
+# Or via Docker
+docker-compose up -d --build
+
+# Run tests (100 passing)
+python -m pytest tests/ -v
+
+# API endpoints
+GET  /r6/fhir/metadata
+GET  /r6/fhir/health
+POST /r6/fhir/{type}
+GET  /r6/fhir/{type}/{id}
+POST /r6/fhir/{type}/$validate
+POST /r6/fhir/Bundle/$ingest-context</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row mb-4">
+  <div class="col-md-12">
+    <div class="r6-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-globe"></i>
+        <h3>Discovery Endpoints</h3>
+      </div>
+      <div class="r6-panel-body">
+        <div class="row" style="font-size:0.85rem">
+          <div class="col-md-3 mb-2">
+            <a href="/r6/fhir/metadata" target="_blank" style="color:var(--r6-info);text-decoration:none">
+              <i class="fas fa-external-link-alt me-1"></i> /r6/fhir/metadata
+            </a>
+            <div style="color:var(--r6-text-muted);font-size:0.75rem">CapabilityStatement</div>
+          </div>
+          <div class="col-md-3 mb-2">
+            <a href="/r6/fhir/health" target="_blank" style="color:var(--r6-info);text-decoration:none">
+              <i class="fas fa-external-link-alt me-1"></i> /r6/fhir/health
+            </a>
+            <div style="color:var(--r6-text-muted);font-size:0.75rem">Liveness/Readiness</div>
+          </div>
+          <div class="col-md-3 mb-2">
+            <a href="/r6/fhir/.well-known/smart-configuration" target="_blank" style="color:var(--r6-info);text-decoration:none">
+              <i class="fas fa-external-link-alt me-1"></i> SMART Configuration
+            </a>
+            <div style="color:var(--r6-text-muted);font-size:0.75rem">SMART-on-FHIR v2</div>
+          </div>
+          <div class="col-md-3 mb-2">
+            <a href="/r6/fhir/docs/privacy-policy" target="_blank" style="color:var(--r6-info);text-decoration:none">
+              <i class="fas fa-external-link-alt me-1"></i> Privacy Policy
+            </a>
+            <div style="color:var(--r6-text-muted);font-size:0.75rem">Compliance & Terms</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
