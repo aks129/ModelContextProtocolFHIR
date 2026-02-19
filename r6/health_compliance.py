@@ -31,6 +31,8 @@ MEDICAL_DISCLAIMER = (
 CLINICAL_RESOURCE_TYPES = {
     'Observation', 'Condition', 'MedicationRequest', 'DiagnosticReport',
     'AllergyIntolerance', 'Procedure', 'CarePlan', 'Immunization',
+    # Phase 2 — R6 clinical types
+    'NutritionIntake', 'DeviceAlert',
 }
 
 

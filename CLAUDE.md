@@ -3,7 +3,7 @@
 ## Project Overview
 An **R6-only, agent-first FHIR server showcase** built on Python Flask with a Node.js MCP orchestrator.
 Demonstrates a minimal FHIR R6 surface with agent tool orchestration via Model Context Protocol (MCP).
-Version 0.5.0 — 100 tests passing.
+Version 0.6.0 — Phase 2 with R6-specific capabilities, 10 MCP tools, 16 resource types.
 
 ## Architecture
 ```
@@ -17,8 +17,10 @@ Version 0.5.0 — 100 tests passing.
 ├─────────────────────────────────────────────────┤
 │  MCP Server (Node.js)                            │
 │  ├── Streamable HTTP + SSE transports            │
-│  ├── 6 tools: context.get, fhir.read/search/     │
-│  │   validate, fhir.propose_write/commit_write   │
+│  ├── 10 tools: context.get, fhir.read/search/    │
+│  │   validate, propose_write/commit_write,        │
+│  │   stats, lastn, permission_evaluate,            │
+│  │   subscription_topics                           │
 │  └── Session management + CORS deny-by-default   │
 ├─────────────────────────────────────────────────┤
 │  Database: SQLite (dev) / PostgreSQL (prod)      │
@@ -62,10 +64,11 @@ cd services/agent-orchestrator && npm ci && npm test
 - R6 is in **first full ballot** (v6.0.0-ballot3 / CI-build)
 - Resources stored as **canonical JSON** with minimal envelope fields
 - Validation via `$validate` endpoint
-- Supported R6 resources: Patient, Encounter, Observation, Bundle, AuditEvent, Consent, OperationOutcome
+- Phase 1 resources: Patient, Encounter, Observation, Bundle, AuditEvent, Consent, OperationOutcome
+- Phase 2 resources: Permission, SubscriptionTopic, Subscription, NutritionIntake, NutritionProduct, DeviceAlert, DeviceAssociation, Requirements, ActorDefinition
 
 ## Agent Guardrails
-- **Read tools** (no step-up): `context.get`, `fhir.read`, `fhir.search`, `fhir.validate`
+- **Read tools** (no step-up): `context.get`, `fhir.read`, `fhir.search`, `fhir.validate`, `fhir.stats`, `fhir.lastn`, `fhir.permission_evaluate`, `fhir.subscription_topics`
 - **Write tools** (require step-up token): `fhir.propose_write`, `fhir.commit_write`
 - All reads and writes emit AuditEvent records
 - Agent proposals must pass `$validate` before commit

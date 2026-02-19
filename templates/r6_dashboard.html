@@ -12,7 +12,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
     <div>
       <h1><i class="fas fa-fire me-2" style="color:var(--r6-primary)"></i>R6 FHIR Agent Dashboard</h1>
-      <p class="lead mb-0">Interactive showcase of the R6-only, agent-first FHIR server with MCP tool orchestration</p>
+      <p class="lead mb-0">Interactive showcase of the R6-only, agent-first FHIR server with MCP tool orchestration — Phase 2</p>
     </div>
     <div class="d-flex gap-2">
       <button class="r6-btn r6-btn-primary" onclick="startWalkthrough()">
@@ -219,6 +219,128 @@
           <i class="fas fa-lock"></i> Run OAuth Flow (4 steps)
         </button>
         <div class="r6-json-output" id="oauth-result"></div>
+      </div>
+    </div>
+
+    <!-- Phase 2: R6 Capabilities Showcase -->
+    <div class="r6-panel" id="phase2-header" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 1px solid var(--r6-primary);">
+      <div class="r6-panel-header" style="border-bottom-color: var(--r6-primary);">
+        <i class="fas fa-rocket" style="color: var(--r6-primary)"></i>
+        <h3 style="color: var(--r6-primary)">Phase 2 — R6-Specific Capabilities</h3>
+        <span class="r6-tag r6-tag-write">NEW</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.5rem">
+          New R6 ballot features: Permission-based access control (separate from Consent), topic-based subscriptions,
+          Observation $stats/$lastn, NutritionIntake tracking, DeviceAlert monitoring, and 9 new resource types.
+        </p>
+        <p style="color:var(--r6-text-muted);font-size:0.78rem;margin-bottom:0">
+          <strong>QA & Review:</strong> Josh Mandel (SMART Health IT) &amp; Gino Canessa (FHIR Subscriptions WG) — assessment pending ballot reconciliation.
+        </p>
+      </div>
+    </div>
+
+    <!-- Phase 2: Permission (R6 Access Control) -->
+    <div class="r6-panel" id="permission-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-user-shield"></i>
+        <h3>R6 Permission — Access Control</h3>
+        <span class="r6-tag r6-tag-security">R6 NEW</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          R6 separates <strong>Permission</strong> (machine-readable access rules) from <strong>Consent</strong> (patient agreements).
+          Permission encodes attribute-based access control with deny-overrides/permit-overrides combining.
+          Create a Permission, then evaluate access decisions via <code>$evaluate</code>.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-create-permission" onclick="createDemoPermission()">
+            <i class="fas fa-plus"></i> Create Permission
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-eval-permission" onclick="evaluatePermission()">
+            <i class="fas fa-gavel"></i> $evaluate Access
+          </button>
+        </div>
+        <div class="r6-json-output" id="permission-result"></div>
+      </div>
+    </div>
+
+    <!-- Phase 2: Observation $stats / $lastn -->
+    <div class="r6-panel" id="stats-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-chart-bar"></i>
+        <h3>Observation $stats &amp; $lastn</h3>
+        <span class="r6-tag r6-tag-read">R6 Operations</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          R6 Observation operations: <code>$stats</code> computes min/max/mean/count over stored values,
+          <code>$lastn</code> returns the most recent observations per code. Both support patient + code filtering.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-success r6-btn-sm" id="btn-seed-obs" onclick="seedObservations()">
+            <i class="fas fa-database"></i> Seed Observations
+          </button>
+          <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-run-stats" onclick="runObsStats()">
+            <i class="fas fa-chart-bar"></i> $stats
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-run-lastn" onclick="runObsLastN()">
+            <i class="fas fa-history"></i> $lastn
+          </button>
+        </div>
+        <div class="r6-json-output" id="stats-result"></div>
+      </div>
+    </div>
+
+    <!-- Phase 2: SubscriptionTopic -->
+    <div class="r6-panel" id="subscription-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-bell"></i>
+        <h3>Topic-Based Subscriptions</h3>
+        <span class="r6-tag r6-tag-clinical">R6 Normative</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          R6 moves topic-based subscriptions toward <strong>Normative</strong> status. SubscriptionTopics define
+          triggerable events (resource changes, ADT events). Agents discover topics, then subscribe via channels
+          (REST-hook, WebSocket). Payload modes: full-resource, id-only, empty.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-create-topic" onclick="createDemoTopic()">
+            <i class="fas fa-plus"></i> Create Topic
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-list-topics" onclick="listTopics()">
+            <i class="fas fa-list"></i> $list Topics
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-create-subscription" onclick="createDemoSubscription()">
+            <i class="fas fa-bell"></i> Subscribe
+          </button>
+        </div>
+        <div class="r6-json-output" id="subscription-result"></div>
+      </div>
+    </div>
+
+    <!-- Phase 2: NutritionIntake + DeviceAlert -->
+    <div class="r6-panel" id="r6resources-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-utensils"></i>
+        <h3>R6 New Resources</h3>
+        <span class="r6-tag r6-tag-write">R6 Core</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          <strong>NutritionIntake</strong>: Records food/liquid/supplement consumption (hospitals, meal tracking, school districts).
+          <strong>DeviceAlert</strong>: Medical device alert/alarm conditions aligned with ISO/IEEE 11073 and IEC 60601-1-8.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-create-nutrition" onclick="createNutritionIntake()">
+            <i class="fas fa-utensils"></i> Create NutritionIntake
+          </button>
+          <button class="r6-btn r6-btn-danger r6-btn-sm" id="btn-create-alert" onclick="createDeviceAlert()">
+            <i class="fas fa-exclamation-triangle"></i> Create DeviceAlert
+          </button>
+        </div>
+        <div class="r6-json-output" id="r6resources-result"></div>
       </div>
     </div>
 

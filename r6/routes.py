@@ -60,6 +60,12 @@ _TENANT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]{1,64}$')
 # AuditEvent is system-managed — block external CRUD
 _SYSTEM_MANAGED_TYPES = {'AuditEvent'}
 
+# Phase 2: R6-specific valid Permission combining codes
+_PERMISSION_COMBINING_CODES = {
+    'deny-overrides', 'permit-overrides', 'ordered-deny-overrides',
+    'ordered-permit-overrides', 'deny-unless-permit', 'permit-unless-deny',
+}
+
 # Valid Bundle types per FHIR spec
 _VALID_BUNDLE_TYPES = {
     'document', 'message', 'transaction', 'transaction-response',
@@ -134,7 +140,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Showcase',
-            'version': '0.5.0'
+            'version': '0.6.0'
         },
         'implementation': {
             'description': 'R6-only Agent-First FHIR Server Showcase',
@@ -154,7 +160,15 @@ def r6_metadata():
                     {
                         'name': 'ingest-context',
                         'definition': request.host_url.rstrip('/') + '/r6/fhir/Bundle/$ingest-context'
-                    }
+                    },
+                    {
+                        'name': 'stats',
+                        'definition': 'http://hl7.org/fhir/OperationDefinition/Observation-stats'
+                    },
+                    {
+                        'name': 'lastn',
+                        'definition': 'http://hl7.org/fhir/OperationDefinition/Observation-lastn'
+                    },
                 ]
             }
         ]
@@ -638,6 +652,295 @@ def import_stub():
     return jsonify(result), 202
 
 
+# --- Phase 2: Observation $stats Operation (R6) ---
+
+@r6_blueprint.route('/Observation/$stats', methods=['GET'])
+def observation_stats():
+    """
+    Observation $stats — compute statistics over stored Observations.
+
+    R6 defines $stats for computing mean, min, max, count over a code/patient scope.
+    Supported stat codes: count, min, max, mean.
+    """
+    tenant_id = request.headers.get('X-Tenant-Id')
+    code = request.args.get('code')
+    patient_ref = request.args.get('patient')
+
+    query = R6Resource.query.filter_by(
+        resource_type='Observation', is_deleted=False, tenant_id=tenant_id
+    )
+
+    if patient_ref:
+        if not _PATIENT_REF_PATTERN.match(patient_ref):
+            return _operation_outcome('error', 'invalid',
+                                      'Patient reference must match Patient/{id}'), 400
+        query = query.filter(
+            db.or_(
+                R6Resource.resource_json.contains(f'"reference":"{patient_ref}"'),
+                R6Resource.resource_json.contains(f'"reference": "{patient_ref}"'),
+            )
+        )
+
+    observations = query.all()
+
+    # Extract numeric values matching the code filter
+    values = []
+    for obs in observations:
+        resource = json.loads(obs.resource_json)
+        # Filter by code if specified
+        if code:
+            obs_codings = resource.get('code', {}).get('coding', [])
+            if not any(c.get('code') == code for c in obs_codings):
+                continue
+        # Extract valueQuantity.value
+        vq = resource.get('valueQuantity', {})
+        if isinstance(vq, dict) and 'value' in vq:
+            try:
+                values.append(float(vq['value']))
+            except (ValueError, TypeError):
+                pass
+
+    stats = {
+        'count': len(values),
+        'min': round(min(values), 2) if values else None,
+        'max': round(max(values), 2) if values else None,
+        'mean': round(sum(values) / len(values), 2) if values else None,
+    }
+
+    result = {
+        'resourceType': 'Parameters',
+        'parameter': [
+            {'name': 'count', 'valueInteger': stats['count']},
+        ]
+    }
+    if stats['min'] is not None:
+        result['parameter'].extend([
+            {'name': 'min', 'valueDecimal': stats['min']},
+            {'name': 'max', 'valueDecimal': stats['max']},
+            {'name': 'mean', 'valueDecimal': stats['mean']},
+        ])
+
+    unit = None
+    if values and observations:
+        for obs in observations:
+            resource = json.loads(obs.resource_json)
+            vq = resource.get('valueQuantity', {})
+            if vq.get('unit'):
+                unit = vq['unit']
+                break
+    if unit:
+        result['parameter'].append({'name': 'unit', 'valueString': unit})
+
+    record_audit_event('read', 'Observation', None,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
+                       detail=f'$stats: code={code}, count={stats["count"]}')
+
+    return jsonify(result)
+
+
+# --- Phase 2: Observation $lastn Operation (R6) ---
+
+@r6_blueprint.route('/Observation/$lastn', methods=['GET'])
+def observation_lastn():
+    """
+    Observation $lastn — get the last N observations per code.
+
+    Returns the most recent observations, optionally filtered by patient and code.
+    Default N=1 (return only the latest observation per code).
+    """
+    tenant_id = request.headers.get('X-Tenant-Id')
+    code = request.args.get('code')
+    patient_ref = request.args.get('patient')
+    max_n = request.args.get('max', 1, type=int)
+    max_n = max(1, min(max_n, 100))
+
+    query = R6Resource.query.filter_by(
+        resource_type='Observation', is_deleted=False, tenant_id=tenant_id
+    ).order_by(R6Resource.last_updated.desc())
+
+    if patient_ref:
+        if not _PATIENT_REF_PATTERN.match(patient_ref):
+            return _operation_outcome('error', 'invalid',
+                                      'Patient reference must match Patient/{id}'), 400
+        query = query.filter(
+            db.or_(
+                R6Resource.resource_json.contains(f'"reference":"{patient_ref}"'),
+                R6Resource.resource_json.contains(f'"reference": "{patient_ref}"'),
+            )
+        )
+
+    all_observations = query.all()
+
+    # Group by code and take last N per code
+    code_groups = {}
+    for obs in all_observations:
+        resource = json.loads(obs.resource_json)
+        obs_codings = resource.get('code', {}).get('coding', [])
+        obs_code = obs_codings[0].get('code') if obs_codings else 'unknown'
+
+        if code and obs_code != code:
+            continue
+
+        if obs_code not in code_groups:
+            code_groups[obs_code] = []
+        if len(code_groups[obs_code]) < max_n:
+            code_groups[obs_code].append(obs)
+
+    entries = []
+    for code_key, obs_list in code_groups.items():
+        for obs in obs_list:
+            fhir_json = apply_redaction(obs.to_fhir_json())
+            fhir_json = add_disclaimer(fhir_json, 'Observation')
+            entries.append({
+                'fullUrl': f'{request.host_url.rstrip("/")}/r6/fhir/Observation/{obs.id}',
+                'resource': fhir_json
+            })
+
+    bundle = {
+        'resourceType': 'Bundle',
+        'type': 'searchset',
+        'total': len(entries),
+        'entry': entries
+    }
+
+    record_audit_event('read', 'Observation', None,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
+                       detail=f'$lastn: code={code}, max={max_n}, results={len(entries)}')
+
+    return jsonify(bundle)
+
+
+# --- Phase 2: SubscriptionTopic Discovery (R6) ---
+
+@r6_blueprint.route('/SubscriptionTopic/$list', methods=['GET'])
+def list_subscription_topics():
+    """
+    List available SubscriptionTopics for discovery.
+
+    R6 moves topic-based subscriptions toward Normative status.
+    Agents use this to discover what events they can subscribe to.
+    """
+    tenant_id = request.headers.get('X-Tenant-Id')
+
+    # Query stored SubscriptionTopics for this tenant
+    topics = R6Resource.query.filter_by(
+        resource_type='SubscriptionTopic', is_deleted=False, tenant_id=tenant_id
+    ).all()
+
+    entries = []
+    for t in topics:
+        fhir_json = t.to_fhir_json()
+        entries.append({
+            'fullUrl': f'{request.host_url.rstrip("/")}/r6/fhir/SubscriptionTopic/{t.id}',
+            'resource': fhir_json
+        })
+
+    bundle = {
+        'resourceType': 'Bundle',
+        'type': 'searchset',
+        'total': len(entries),
+        'entry': entries
+    }
+
+    record_audit_event('read', 'SubscriptionTopic', None,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
+                       detail=f'$list: {len(entries)} topics found')
+
+    return jsonify(bundle)
+
+
+# --- Phase 2: Permission $evaluate (R6 Access Control) ---
+
+@r6_blueprint.route('/Permission/$evaluate', methods=['POST'])
+def evaluate_permission():
+    """
+    Evaluate a Permission request against stored Permission resources.
+
+    This is the R6 access control evaluation endpoint. Given a subject,
+    action, and resource, returns whether the action is permitted or denied
+    based on stored Permission resources.
+    """
+    tenant_id = request.headers.get('X-Tenant-Id')
+    body = request.get_json(silent=True)
+    if not body:
+        return _operation_outcome('error', 'invalid', 'Request body must be valid JSON'), 400
+
+    subject_ref = body.get('subject')
+    action = body.get('action', 'read')
+    resource_ref = body.get('resource')
+
+    # Query active Permission resources for this tenant
+    permissions = R6Resource.query.filter_by(
+        resource_type='Permission', is_deleted=False, tenant_id=tenant_id
+    ).all()
+
+    # Evaluate: find matching rules
+    decision = 'deny'  # Default deny
+    matched_rules = []
+
+    for perm in permissions:
+        perm_data = json.loads(perm.resource_json)
+        if perm_data.get('status') != 'active':
+            continue
+
+        combining = perm_data.get('combining', 'deny-overrides')
+        rules = perm_data.get('rule', [])
+
+        for rule in rules:
+            rule_type = rule.get('type', 'deny')
+
+            # Check if rule matches the requested action
+            activities = rule.get('activity', [])
+            action_match = not activities  # Empty means match all
+            for activity in activities:
+                act_actions = activity.get('action', [])
+                if not act_actions:
+                    action_match = True
+                    break
+                # Actions may be CodeableConcept with coding array, or plain code
+                for a in act_actions:
+                    if a.get('code') == action:
+                        action_match = True
+                        break
+                    # Check inside coding array (CodeableConcept pattern)
+                    for coding in a.get('coding', []):
+                        if coding.get('code') == action:
+                            action_match = True
+                            break
+                if action_match:
+                    break
+
+            if action_match:
+                matched_rules.append({
+                    'permission_id': perm.id,
+                    'rule_type': rule_type,
+                    'combining': combining,
+                })
+
+                if rule_type == 'permit':
+                    decision = 'permit'
+
+    result = {
+        'resourceType': 'Parameters',
+        'parameter': [
+            {'name': 'decision', 'valueCode': decision},
+            {'name': 'matched_rules', 'valueInteger': len(matched_rules)},
+            {'name': 'subject', 'valueString': subject_ref or 'unspecified'},
+            {'name': 'action', 'valueCode': action},
+        ]
+    }
+
+    record_audit_event('read', 'Permission', None,
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
+                       detail=f'$evaluate: subject={subject_ref}, action={action}, decision={decision}')
+
+    return jsonify(result)
+
+
 # --- De-identification Endpoint ---
 
 @r6_blueprint.route('/<resource_type>/<resource_id>/$deidentify', methods=['GET'])
@@ -772,7 +1075,7 @@ def health_check():
     """
     health = {
         'status': 'healthy',
-        'version': '0.5.0',
+        'version': '0.6.0',
         'fhirVersion': R6_FHIR_VERSION,
         'checks': {}
     }

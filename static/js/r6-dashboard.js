@@ -147,6 +147,11 @@ const TOOL_DEFS = [
   { name: 'fhir.validate', desc: 'Validate a resource against R6', tier: 'read' },
   { name: 'fhir.propose_write', desc: 'Validate + preview a write (no commit)', tier: 'write' },
   { name: 'fhir.commit_write', desc: 'Commit a write (requires step-up)', tier: 'write' },
+  // Phase 2: R6-specific tools
+  { name: 'fhir.stats', desc: 'Observation $stats (min/max/mean)', tier: 'read', phase: 2 },
+  { name: 'fhir.lastn', desc: 'Observation $lastn (most recent)', tier: 'read', phase: 2 },
+  { name: 'fhir.permission_evaluate', desc: 'R6 Permission $evaluate', tier: 'read', phase: 2 },
+  { name: 'fhir.subscription_topics', desc: 'List SubscriptionTopics', tier: 'read', phase: 2 },
 ];
 
 function renderToolCards() {
@@ -154,9 +159,10 @@ function renderToolCards() {
   if (!container) return;
   container.innerHTML = TOOL_DEFS.map(t => `
     <div class="tool-card" data-tool="${t.name}" onclick="selectTool('${t.name}')">
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="tool-name">${t.name}</span>
         <span class="r6-tag r6-tag-${t.tier === 'read' ? 'read' : 'write'}">${t.tier}</span>
+        ${t.phase === 2 ? '<span class="r6-tag r6-tag-clinical" style="font-size:0.6rem">R6</span>' : ''}
       </div>
       <div class="tool-desc">${t.desc}</div>
     </div>
@@ -174,6 +180,11 @@ function selectTool(name) {
     'context.get': { context_id: '(ingest a bundle first)' },
     'fhir.propose_write': { resource: { resourceType: 'Observation', id: 'new-obs', status: 'preliminary', code: { coding: [{ system: 'http://loinc.org', code: '8867-4' }] } }, operation: 'create' },
     'fhir.commit_write': { resource: { resourceType: 'Patient', id: 'demo-pt-1', name: [{ family: 'Martinez-Updated' }], gender: 'female', birthDate: '1985-07-22' }, operation: 'update' },
+    // Phase 2 tools
+    'fhir.stats': { code: '2339-0' },
+    'fhir.lastn': { code: '2339-0', max: 3 },
+    'fhir.permission_evaluate': { subject: 'Practitioner/dr-1', action: 'read', resource: 'Patient/demo-pt-1' },
+    'fhir.subscription_topics': {},
   };
   document.getElementById('tool-input').value = JSON.stringify(examples[name] || {}, null, 2);
 }
@@ -231,6 +242,30 @@ async function executeSelectedTool() {
         });
         break;
       }
+      // Phase 2: R6-specific tool execution
+      case 'fhir.stats': {
+        const sp = new URLSearchParams();
+        if (input.code) sp.set('code', input.code);
+        if (input.patient) sp.set('patient', input.patient);
+        res = await r6Fetch(`/Observation/$stats?${sp}`);
+        break;
+      }
+      case 'fhir.lastn': {
+        const lp = new URLSearchParams();
+        if (input.code) lp.set('code', input.code);
+        if (input.patient) lp.set('patient', input.patient);
+        if (input.max) lp.set('max', input.max);
+        res = await r6Fetch(`/Observation/$lastn?${lp}`);
+        break;
+      }
+      case 'fhir.permission_evaluate':
+        res = await r6Fetch('/Permission/$evaluate', {
+          method: 'POST', body: JSON.stringify(input)
+        });
+        break;
+      case 'fhir.subscription_topics':
+        res = await r6Fetch('/SubscriptionTopic/$list');
+        break;
       default:
         res = { status: 400, body: { error: 'Unknown tool' } };
     }
@@ -481,6 +516,296 @@ async function validateDemo() {
   setLoading('btn-validate', false);
 }
 
+// --------------- Phase 2: Permission (R6 Access Control) ---------------
+
+async function createDemoPermission() {
+  setLoading('btn-create-permission', true);
+  clearResult('permission-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const permission = {
+    resourceType: 'Permission',
+    id: 'demo-permission-1',
+    status: 'active',
+    combining: 'deny-overrides',
+    asserter: { reference: 'Organization/hospital-1' },
+    justification: {
+      basis: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'TREAT', display: 'Treatment' }] }]
+    },
+    rule: [
+      {
+        type: 'permit',
+        activity: [{
+          action: [{ coding: [{ system: 'http://hl7.org/fhir/permission-action', code: 'read' }] }],
+          purpose: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'TREAT' }] }]
+        }]
+      },
+      {
+        type: 'deny',
+        activity: [{
+          action: [{ coding: [{ system: 'http://hl7.org/fhir/permission-action', code: 'delete' }] }]
+        }]
+      }
+    ]
+  };
+
+  const res = await r6Fetch('/Permission', {
+    method: 'POST',
+    headers: { 'X-Step-Up-Token': token || '' },
+    body: JSON.stringify(permission)
+  });
+
+  showResult('permission-result', res.body, res.status);
+  if (res.status === 201) toast('R6 Permission created (deny-overrides)', 'success');
+  setLoading('btn-create-permission', false);
+  refreshAuditFeed();
+}
+
+async function evaluatePermission() {
+  setLoading('btn-eval-permission', true);
+  clearResult('permission-result');
+
+  const evalReq = {
+    subject: 'Practitioner/dr-jones',
+    action: 'read',
+    resource: 'Patient/demo-pt-1'
+  };
+
+  const res = await r6Fetch('/Permission/$evaluate', {
+    method: 'POST', body: JSON.stringify(evalReq)
+  });
+
+  showResult('permission-result', res.body, res.status);
+  const decision = res.body?.parameter?.find(p => p.name === 'decision')?.valueCode;
+  toast(`Permission decision: ${decision || 'unknown'}`, decision === 'permit' ? 'success' : 'error');
+  setLoading('btn-eval-permission', false);
+  refreshAuditFeed();
+}
+
+// --------------- Phase 2: Observation $stats / $lastn ---------------
+
+async function seedObservations() {
+  setLoading('btn-seed-obs', true);
+  clearResult('stats-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const glucoseValues = [95, 110, 120, 88, 105, 130, 98, 115];
+  const results = [];
+
+  for (let i = 0; i < glucoseValues.length; i++) {
+    const obs = {
+      resourceType: 'Observation', id: `stats-obs-${i}`,
+      status: 'final',
+      code: { coding: [{ system: 'http://loinc.org', code: '2339-0', display: 'Glucose [Mass/volume] in Blood' }] },
+      subject: { reference: 'Patient/demo-pt-1' },
+      valueQuantity: { value: glucoseValues[i], unit: 'mg/dL', system: 'http://unitsofmeasure.org', code: 'mg/dL' }
+    };
+
+    const res = await r6Fetch('/Observation', {
+      method: 'POST',
+      headers: { 'X-Step-Up-Token': token || '', 'X-Human-Confirmed': 'true' },
+      body: JSON.stringify(obs)
+    });
+    results.push({ id: obs.id, value: glucoseValues[i], status: res.status });
+  }
+
+  showResult('stats-result', { seeded: results.length, observations: results });
+  toast(`Seeded ${results.length} Glucose observations`, 'success');
+  setLoading('btn-seed-obs', false);
+  refreshAuditFeed();
+}
+
+async function runObsStats() {
+  setLoading('btn-run-stats', true);
+  clearResult('stats-result');
+
+  const res = await r6Fetch('/Observation/$stats?code=2339-0');
+  showResult('stats-result', res.body, res.status);
+
+  const count = res.body?.parameter?.find(p => p.name === 'count')?.valueInteger;
+  const mean = res.body?.parameter?.find(p => p.name === 'mean')?.valueDecimal;
+  if (count) toast(`$stats: ${count} observations, mean=${mean}`, 'success');
+  setLoading('btn-run-stats', false);
+}
+
+async function runObsLastN() {
+  setLoading('btn-run-lastn', true);
+  clearResult('stats-result');
+
+  const res = await r6Fetch('/Observation/$lastn?code=2339-0&max=3');
+  showResult('stats-result', res.body, res.status);
+  toast(`$lastn: ${res.body?.total || 0} observations returned`, 'success');
+  setLoading('btn-run-lastn', false);
+}
+
+// --------------- Phase 2: SubscriptionTopic ---------------
+
+async function createDemoTopic() {
+  setLoading('btn-create-topic', true);
+  clearResult('subscription-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const topic = {
+    resourceType: 'SubscriptionTopic',
+    id: 'encounter-admit',
+    url: 'http://example.org/fhir/SubscriptionTopic/encounter-admit',
+    status: 'active',
+    title: 'Encounter Admission Events',
+    description: 'Triggers when an Encounter status changes to in-progress (admission)',
+    resourceTrigger: [{
+      description: 'Encounter admission trigger',
+      resource: 'Encounter',
+      supportedInteraction: ['create', 'update'],
+      queryCriteria: {
+        current: 'status=in-progress',
+        resultForCreate: 'test-passes',
+        resultForDelete: 'test-fails'
+      }
+    }],
+    canFilterBy: [
+      { description: 'Filter by patient', resource: 'Encounter', filterParameter: 'patient' },
+      { description: 'Filter by class', resource: 'Encounter', filterParameter: 'class' }
+    ],
+    notificationShape: [{
+      resource: 'Encounter',
+      include: ['Encounter:patient', 'Encounter:practitioner']
+    }]
+  };
+
+  const res = await r6Fetch('/SubscriptionTopic', {
+    method: 'POST',
+    headers: { 'X-Step-Up-Token': token || '' },
+    body: JSON.stringify(topic)
+  });
+
+  showResult('subscription-result', res.body, res.status);
+  if (res.status === 201) toast('SubscriptionTopic created: encounter-admit', 'success');
+  setLoading('btn-create-topic', false);
+  refreshAuditFeed();
+}
+
+async function listTopics() {
+  setLoading('btn-list-topics', true);
+  clearResult('subscription-result');
+
+  const res = await r6Fetch('/SubscriptionTopic/$list');
+  showResult('subscription-result', res.body, res.status);
+  toast(`Found ${res.body?.total || 0} SubscriptionTopics`, 'success');
+  setLoading('btn-list-topics', false);
+}
+
+async function createDemoSubscription() {
+  setLoading('btn-create-subscription', true);
+  clearResult('subscription-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const subscription = {
+    resourceType: 'Subscription',
+    id: 'sub-encounter-admit',
+    status: 'requested',
+    topic: 'http://example.org/fhir/SubscriptionTopic/encounter-admit',
+    reason: 'Monitor patient admissions for care coordination',
+    channelType: { system: 'http://terminology.hl7.org/CodeSystem/subscription-channel-type', code: 'rest-hook' },
+    endpoint: 'https://agent.example.org/webhooks/admission',
+    heartbeatPeriod: 60,
+    content: 'id-only',
+    maxCount: 10,
+    filterBy: [{
+      resourceType: 'Encounter',
+      filterParameter: 'patient',
+      value: 'Patient/demo-pt-1'
+    }]
+  };
+
+  const res = await r6Fetch('/Subscription', {
+    method: 'POST',
+    headers: { 'X-Step-Up-Token': token || '' },
+    body: JSON.stringify(subscription)
+  });
+
+  showResult('subscription-result', res.body, res.status);
+  if (res.status === 201) toast('Subscription created for encounter-admit', 'success');
+  setLoading('btn-create-subscription', false);
+  refreshAuditFeed();
+}
+
+// --------------- Phase 2: NutritionIntake + DeviceAlert ---------------
+
+async function createNutritionIntake() {
+  setLoading('btn-create-nutrition', true);
+  clearResult('r6resources-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const intake = {
+    resourceType: 'NutritionIntake',
+    id: 'demo-nutrition-1',
+    status: 'completed',
+    subject: { reference: 'Patient/demo-pt-1' },
+    consumedItem: [{
+      type: { coding: [{ system: 'http://snomed.info/sct', code: '226059008', display: 'Breakfast cereal' }] },
+      nutritionProduct: { concept: { coding: [{ system: 'http://snomed.info/sct', code: '226029003', display: 'Corn flakes' }] } },
+      amount: { value: 1, unit: 'serving', system: 'http://unitsofmeasure.org', code: '{serving}' }
+    }],
+    reportedBoolean: true
+  };
+
+  const res = await r6Fetch('/NutritionIntake', {
+    method: 'POST',
+    headers: { 'X-Step-Up-Token': token || '', 'X-Human-Confirmed': 'true' },
+    body: JSON.stringify(intake)
+  });
+
+  showResult('r6resources-result', res.body, res.status);
+  if (res.status === 201) toast('NutritionIntake recorded', 'success');
+  setLoading('btn-create-nutrition', false);
+  refreshAuditFeed();
+}
+
+async function createDeviceAlert() {
+  setLoading('btn-create-alert', true);
+  clearResult('r6resources-result');
+
+  const tkRes = await r6Fetch('/internal/step-up-token', { method: 'POST', body: JSON.stringify({ tenant_id: TENANT }) });
+  const token = tkRes.body?.token;
+
+  const alert = {
+    resourceType: 'DeviceAlert',
+    id: 'demo-alert-1',
+    status: 'active',
+    condition: {
+      coding: [{
+        system: 'urn:iso:std:iso:11073:10101',
+        code: 'MDC_EVT_HI_GT_LIM',
+        display: 'High limit alarm'
+      }]
+    },
+    device: { reference: 'Device/infusion-pump-1' },
+    subject: { reference: 'Patient/demo-pt-1' },
+    derivedFrom: [{ reference: 'Observation/stats-obs-6' }]
+  };
+
+  const res = await r6Fetch('/DeviceAlert', {
+    method: 'POST',
+    headers: { 'X-Step-Up-Token': token || '', 'X-Human-Confirmed': 'true' },
+    body: JSON.stringify(alert)
+  });
+
+  showResult('r6resources-result', res.body, res.status);
+  if (res.status === 201) toast('DeviceAlert created (high limit alarm)', 'success');
+  setLoading('btn-create-alert', false);
+  refreshAuditFeed();
+}
+
 // --------------- Walkthrough Mode ---------------
 
 const WALKTHROUGH_STEPS = [
@@ -490,6 +815,11 @@ const WALKTHROUGH_STEPS = [
   { title: 'De-identify Patient (Safe Harbor)', action: runDeidentify, panel: 'deid-panel' },
   { title: 'Human-in-the-Loop Enforcement', action: demoHumanInLoop, panel: 'hitl-panel' },
   { title: 'Full OAuth 2.1 + PKCE Flow', action: demoOAuthFlow, panel: 'oauth-panel' },
+  // Phase 2 steps
+  { title: 'R6 Permission + $evaluate', action: async () => { await createDemoPermission(); await evaluatePermission(); }, panel: 'permission-panel' },
+  { title: 'Seed Observations + $stats', action: async () => { await seedObservations(); await runObsStats(); }, panel: 'stats-panel' },
+  { title: 'SubscriptionTopic + Subscribe', action: async () => { await createDemoTopic(); await createDemoSubscription(); }, panel: 'subscription-panel' },
+  { title: 'NutritionIntake + DeviceAlert', action: async () => { await createNutritionIntake(); await createDeviceAlert(); }, panel: 'r6resources-panel' },
 ];
 
 let walkthroughIdx = -1;

@@ -176,6 +176,16 @@ class ContextBuilder:
             'Observation': 'observations',
             'Consent': 'consent',
             'AuditEvent': 'audit',
+            # Phase 2 — R6-specific slices
+            'Permission': 'access-control',
+            'SubscriptionTopic': 'subscriptions',
+            'Subscription': 'subscriptions',
+            'NutritionIntake': 'nutrition',
+            'NutritionProduct': 'nutrition',
+            'DeviceAlert': 'devices',
+            'DeviceAssociation': 'devices',
+            'Requirements': 'conformance',
+            'ActorDefinition': 'conformance',
         }
         return slices.get(resource_type, 'other')
 

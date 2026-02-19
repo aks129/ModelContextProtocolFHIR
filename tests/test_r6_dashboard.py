@@ -38,7 +38,7 @@ class TestHealthEndpoint:
     def test_health_includes_version(self, client):
         resp = client.get('/r6/fhir/health')
         data = resp.get_json()
-        assert data['version'] == '0.5.0'
+        assert data['version'] == '0.6.0'
         assert '6.0.0' in data['fhirVersion']
 
     def test_health_no_tenant_required(self, client):
@@ -555,3 +555,114 @@ class TestImportStubWorkflow:
                           headers=tenant_headers)
         assert resp.status_code == 202
         assert resp.get_json()['_import_stub']['source_version'] == 'R5'
+
+
+# ===== Phase 2: Dashboard Integration Tests =====
+
+
+class TestPhase2DashboardPanels:
+    """Test Phase 2 dashboard panels are present."""
+
+    def test_dashboard_has_phase2_panels(self, client):
+        resp = client.get('/r6-dashboard')
+        html = resp.data.decode()
+        assert 'permission-panel' in html
+        assert 'stats-panel' in html
+        assert 'subscription-panel' in html
+        assert 'r6resources-panel' in html
+        assert 'phase2-header' in html
+
+    def test_dashboard_mentions_reviewers(self, client):
+        resp = client.get('/r6-dashboard')
+        html = resp.data.decode()
+        assert 'Josh Mandel' in html
+        assert 'Gino Canessa' in html
+
+    def test_dashboard_shows_phase2_in_subtitle(self, client):
+        resp = client.get('/r6-dashboard')
+        html = resp.data.decode()
+        assert 'Phase 2' in html
+
+
+class TestPhase2VersionUpdate:
+    """Test version is updated for Phase 2."""
+
+    def test_health_shows_phase2_version(self, client):
+        resp = client.get('/r6/fhir/health')
+        data = resp.get_json()
+        assert data['version'] == '0.6.0'
+
+
+class TestPhase2EndToEndWorkflow:
+    """End-to-end Phase 2 workflow: Permission + $stats + SubscriptionTopic."""
+
+    def test_phase2_workflow(self, client, auth_headers, tenant_headers):
+        # 1. Create Permission
+        permission = {
+            'resourceType': 'Permission', 'id': 'e2e-perm',
+            'status': 'active', 'combining': 'permit-overrides',
+            'rule': [{'type': 'permit', 'activity': [{'action': [{'coding': [{'code': 'read'}]}]}]}]
+        }
+        perm_resp = client.post('/r6/fhir/Permission',
+                                data=json.dumps(permission),
+                                content_type='application/json',
+                                headers=auth_headers)
+        assert perm_resp.status_code == 201
+
+        # 2. Evaluate Permission
+        eval_resp = client.post('/r6/fhir/Permission/$evaluate',
+                                data=json.dumps({'action': 'read'}),
+                                content_type='application/json',
+                                headers=tenant_headers)
+        assert eval_resp.status_code == 200
+        decision = next(p for p in eval_resp.get_json()['parameter'] if p['name'] == 'decision')
+        assert decision['valueCode'] == 'permit'
+
+        # 3. Create Observations for $stats
+        obs_headers = {**auth_headers, 'X-Human-Confirmed': 'true'}
+        for i, val in enumerate([80, 90, 100]):
+            client.post('/r6/fhir/Observation',
+                       data=json.dumps({
+                           'resourceType': 'Observation', 'id': f'e2e-obs-{i}',
+                           'status': 'final',
+                           'code': {'coding': [{'code': '2339-0'}]},
+                           'valueQuantity': {'value': val, 'unit': 'mg/dL'}
+                       }),
+                       content_type='application/json', headers=obs_headers)
+
+        # 4. Run $stats
+        stats_resp = client.get('/r6/fhir/Observation/$stats?code=2339-0',
+                                headers=tenant_headers)
+        assert stats_resp.status_code == 200
+        params = {p['name']: p for p in stats_resp.get_json()['parameter']}
+        assert params['count']['valueInteger'] == 3
+        assert params['mean']['valueDecimal'] == 90.0
+
+        # 5. Run $lastn
+        lastn_resp = client.get('/r6/fhir/Observation/$lastn?code=2339-0&max=1',
+                                headers=tenant_headers)
+        assert lastn_resp.status_code == 200
+        assert lastn_resp.get_json()['total'] == 1
+
+        # 6. Create SubscriptionTopic
+        topic = {
+            'resourceType': 'SubscriptionTopic', 'id': 'e2e-topic',
+            'url': 'http://test.org/topic', 'status': 'active',
+        }
+        topic_resp = client.post('/r6/fhir/SubscriptionTopic',
+                                 data=json.dumps(topic),
+                                 content_type='application/json',
+                                 headers=auth_headers)
+        assert topic_resp.status_code == 201
+
+        # 7. List topics
+        list_resp = client.get('/r6/fhir/SubscriptionTopic/$list',
+                               headers=tenant_headers)
+        assert list_resp.status_code == 200
+        assert list_resp.get_json()['total'] >= 1
+
+        # 8. Verify audit trail captured everything
+        audit_resp = client.get('/r6/fhir/AuditEvent?_count=50',
+                                headers=tenant_headers)
+        assert audit_resp.status_code == 200
+        assert audit_resp.get_json()['total'] >= 5

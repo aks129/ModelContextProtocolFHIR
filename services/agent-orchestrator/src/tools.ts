@@ -90,6 +90,15 @@ export class FHIRTools {
                 "Observation",
                 "AuditEvent",
                 "Consent",
+                "Permission",
+                "SubscriptionTopic",
+                "Subscription",
+                "NutritionIntake",
+                "NutritionProduct",
+                "DeviceAlert",
+                "DeviceAssociation",
+                "Requirements",
+                "ActorDefinition",
               ],
             },
             resource_id: { type: "string", description: "The resource ID" },
@@ -114,6 +123,15 @@ export class FHIRTools {
                 "Observation",
                 "AuditEvent",
                 "Consent",
+                "Permission",
+                "SubscriptionTopic",
+                "Subscription",
+                "NutritionIntake",
+                "NutritionProduct",
+                "DeviceAlert",
+                "DeviceAssociation",
+                "Requirements",
+                "ActorDefinition",
               ],
             },
             patient: {
@@ -189,6 +207,92 @@ export class FHIRTools {
           required: ["resource", "operation"],
         },
       },
+      // --- Phase 2: R6-specific tools ---
+      {
+        name: "fhir.stats",
+        description:
+          "Compute statistics (count, min, max, mean) over Observation resources. R6 $stats operation. Filter by patient and/or LOINC code.",
+        tier: "read",
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {
+          type: "object",
+          properties: {
+            code: {
+              type: "string",
+              description: "LOINC code to filter Observations (e.g., '2339-0' for Glucose)",
+            },
+            patient: {
+              type: "string",
+              description: "Patient reference filter (e.g., 'Patient/pt-1')",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "fhir.lastn",
+        description:
+          "Get the last N observations per code. R6 $lastn operation. Returns most recent observations grouped by code.",
+        tier: "read",
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {
+          type: "object",
+          properties: {
+            code: {
+              type: "string",
+              description: "LOINC code filter",
+            },
+            patient: {
+              type: "string",
+              description: "Patient reference filter",
+            },
+            max: {
+              type: "integer",
+              description: "Max observations per code (default 1)",
+              default: 1,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "fhir.permission_evaluate",
+        description:
+          "Evaluate R6 Permission resources for access control decisions. Returns permit/deny based on stored Permission rules. Separates access control (Permission) from consent records (Consent).",
+        tier: "read",
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {
+          type: "object",
+          properties: {
+            subject: {
+              type: "string",
+              description: "Subject reference (e.g., 'Practitioner/dr-1')",
+            },
+            action: {
+              type: "string",
+              enum: ["read", "write", "delete"],
+              description: "Action to evaluate",
+            },
+            resource: {
+              type: "string",
+              description: "Resource reference to evaluate access for",
+            },
+          },
+          required: ["action"],
+        },
+      },
+      {
+        name: "fhir.subscription_topics",
+        description:
+          "List available SubscriptionTopics for event-driven subscriptions. R6 moves topic-based subscriptions toward Normative. Agents discover what events they can subscribe to.",
+        tier: "read",
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
     ];
   }
 
@@ -259,6 +363,33 @@ export class FHIRTools {
           input.operation as string,
           fwdHeaders
         );
+
+      // Phase 2: R6-specific tools
+      case "fhir.stats":
+        return this.observationStats(
+          input.code as string | undefined,
+          input.patient as string | undefined,
+          fwdHeaders
+        );
+
+      case "fhir.lastn":
+        return this.observationLastN(
+          input.code as string | undefined,
+          input.patient as string | undefined,
+          (input.max as number) || 1,
+          fwdHeaders
+        );
+
+      case "fhir.permission_evaluate":
+        return this.evaluatePermission(
+          input.subject as string | undefined,
+          input.action as string,
+          input.resource as string | undefined,
+          fwdHeaders
+        );
+
+      case "fhir.subscription_topics":
+        return this.listSubscriptionTopics(fwdHeaders);
 
       default:
         return { error: `Unimplemented tool: ${toolName}` };
@@ -385,6 +516,81 @@ export class FHIRTools {
       return { error: `Unknown operation: ${operation}` };
     }
 
+    return (await resp.json()) as Record<string, unknown>;
+  }
+
+  // --- Phase 2: R6-specific tool implementations ---
+
+  private async observationStats(
+    code: string | undefined,
+    patient: string | undefined,
+    headers: Record<string, string>
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (code) params.set("code", code);
+    if (patient) params.set("patient", patient);
+
+    const resp = await fetch(
+      `${this.baseUrl}/Observation/$stats?${params.toString()}`,
+      { headers }
+    );
+    if (!resp.ok) {
+      return { error: `$stats failed with status ${resp.status}` };
+    }
+    return (await resp.json()) as Record<string, unknown>;
+  }
+
+  private async observationLastN(
+    code: string | undefined,
+    patient: string | undefined,
+    max: number,
+    headers: Record<string, string>
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (code) params.set("code", code);
+    if (patient) params.set("patient", patient);
+    params.set("max", max.toString());
+
+    const resp = await fetch(
+      `${this.baseUrl}/Observation/$lastn?${params.toString()}`,
+      { headers }
+    );
+    if (!resp.ok) {
+      return { error: `$lastn failed with status ${resp.status}` };
+    }
+    return (await resp.json()) as Record<string, unknown>;
+  }
+
+  private async evaluatePermission(
+    subject: string | undefined,
+    action: string,
+    resource: string | undefined,
+    headers: Record<string, string>
+  ): Promise<Record<string, unknown>> {
+    const resp = await fetch(
+      `${this.baseUrl}/Permission/$evaluate`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ subject, action, resource }),
+      }
+    );
+    if (!resp.ok) {
+      return { error: `Permission $evaluate failed with status ${resp.status}` };
+    }
+    return (await resp.json()) as Record<string, unknown>;
+  }
+
+  private async listSubscriptionTopics(
+    headers: Record<string, string>
+  ): Promise<Record<string, unknown>> {
+    const resp = await fetch(
+      `${this.baseUrl}/SubscriptionTopic/$list`,
+      { headers }
+    );
+    if (!resp.ok) {
+      return { error: `SubscriptionTopic $list failed with status ${resp.status}` };
+    }
     return (await resp.json()) as Record<string, unknown>;
   }
 }

@@ -30,9 +30,19 @@ class R6Resource(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Supported R6 resource types for the showcase
+    # Phase 1: Core FHIR resources
+    # Phase 2: R6-specific resources (Permission, SubscriptionTopic, Subscription,
+    #          NutritionIntake, NutritionProduct, DeviceAlert, DeviceAssociation,
+    #          Requirements, ActorDefinition)
     SUPPORTED_TYPES = [
+        # Phase 1 — Core
         'Patient', 'Encounter', 'Observation', 'Bundle',
-        'AuditEvent', 'Consent', 'OperationOutcome'
+        'AuditEvent', 'Consent', 'OperationOutcome',
+        # Phase 2 — R6-specific
+        'Permission', 'SubscriptionTopic', 'Subscription',
+        'NutritionIntake', 'NutritionProduct',
+        'DeviceAlert', 'DeviceAssociation',
+        'Requirements', 'ActorDefinition',
     ]
 
     def __init__(self, resource_type, resource_json, resource_id=None, tenant_id=None):
