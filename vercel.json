@@ -17,7 +17,8 @@
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "/static/$1"
+      "dest": "/static/$1",
+      "headers": { "Cache-Control": "public, max-age=0, must-revalidate" }
     },
     {
       "src": "/(.*)",
