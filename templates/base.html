@@ -3,29 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}MCP FHIR Server{% endblock %}</title>
-    <!-- Bootstrap CSS (Replit theme) -->
+    <title>{% block title %}FHIR R6 MCP Showcase{% endblock %}</title>
     <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
-    <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/r6-dashboard.css') }}">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('index') }}">
-                <i class="fas fa-server me-2"></i>MCP FHIR Server
+                <i class="fas fa-fire me-2" style="color:var(--r6-primary)"></i>FHIR R6 MCP
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" 
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
                     aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}" 
+                        <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}"
                            href="{{ url_for('index') }}">Home</a>
                     </li>
                     <li class="nav-item">
@@ -34,33 +31,10 @@
                            <i class="fas fa-fire me-1"></i>R6 Dashboard
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('fhir_explorer') %}active{% endif %}"
-                           href="{{ url_for('fhir_explorer') }}">FHIR Explorer</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" 
-                           href="{{ url_for('settings') }}">Settings</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('documentation') %}active{% endif %}" 
-                           href="{{ url_for('documentation') }}">Documentation</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('mcp_documentation') %}active{% endif %}" 
-                           href="{{ url_for('mcp_documentation') }}">
-                           <i class="fas fa-exchange-alt me-1"></i>MCP Docs
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.path == url_for('claude_interface') %}active{% endif %}" 
-                           href="{{ url_for('claude_interface') }}">
-                           <i class="fas fa-robot me-1"></i>Claude AI
-                        </a>
-                    </li>
                 </ul>
-                <div class="d-flex" id="serverStatusIndicator">
-                    <span class="badge bg-secondary">Server Status: Unknown</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-secondary" style="font-size:0.7rem">v0.5.0</span>
+                    <span class="badge bg-info" style="font-size:0.7rem">R6 ballot3</span>
                 </div>
             </div>
         </div>
@@ -83,14 +57,11 @@
 
     <footer class="footer mt-5 py-3 bg-dark">
         <div class="container text-center">
-            <span class="text-muted">Model Context Protocol (MCP) Server for FHIR</span>
+            <span class="text-muted">FHIR R6 Agent-First Showcase &middot; Model Context Protocol</span>
         </div>
     </footer>
 
-    <!-- Bootstrap JavaScript Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <!-- Custom JavaScript -->
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
