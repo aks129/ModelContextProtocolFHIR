@@ -26,7 +26,7 @@ from r6.context_builder import ContextBuilder
 from r6.validator import R6Validator
 from r6.audit import record_audit_event
 from r6.redaction import apply_redaction
-from r6.stepup import validate_step_up_token
+from r6.stepup import validate_step_up_token, generate_step_up_token
 from r6.oauth import register_oauth_routes
 from r6.rate_limit import rate_limit_middleware
 from r6.health_compliance import (
@@ -79,6 +79,10 @@ def enforce_tenant_id():
     # Public discovery endpoints (no tenant required)
     if request.path.endswith('/metadata'):
         return None
+    if request.path.endswith('/health'):
+        return None
+    if '/internal/' in request.path:
+        return None
     if '/.well-known/' in request.path:
         return None
     if '/oauth/' in request.path:
@@ -130,7 +134,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Showcase',
-            'version': '0.4.0'
+            'version': '0.5.0'
         },
         'implementation': {
             'description': 'R6-only Agent-First FHIR Server Showcase',
@@ -756,6 +760,51 @@ def privacy_policy():
             'website': 'https://www.fhiriq.com',
         },
     })
+
+
+# --- Health Check ---
+
+@r6_blueprint.route('/health', methods=['GET'])
+def health_check():
+    """
+    Health check endpoint for container orchestration (liveness/readiness).
+    Returns 200 if the service is operational, 503 if degraded.
+    """
+    health = {
+        'status': 'healthy',
+        'version': '0.5.0',
+        'fhirVersion': R6_FHIR_VERSION,
+        'checks': {}
+    }
+
+    # Check database connectivity
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        health['checks']['database'] = 'ok'
+    except Exception as e:
+        health['status'] = 'degraded'
+        health['checks']['database'] = 'error'
+        logger.warning(f'Health check: database failed: {e}')
+
+    status_code = 200 if health['status'] == 'healthy' else 503
+    return jsonify(health), status_code
+
+
+# --- Internal Endpoints (dashboard support) ---
+
+@r6_blueprint.route('/internal/step-up-token', methods=['POST'])
+def issue_step_up_token():
+    """
+    Issue a step-up token for the dashboard demo.
+    In production, this would be gated behind an admin auth flow.
+    """
+    body = request.get_json(silent=True) or {}
+    tenant_id = body.get('tenant_id') or request.headers.get('X-Tenant-Id', 'default')
+    try:
+        token = generate_step_up_token(tenant_id)
+        return jsonify({'token': token, 'tenant_id': tenant_id})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # --- Helper Functions ---

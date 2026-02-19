@@ -41,7 +41,7 @@ class TestR6Metadata:
         """CapabilityStatement.software.version must match pyproject.toml."""
         resp = client.get('/r6/fhir/metadata')
         data = resp.get_json()
-        assert data['software']['version'] == '0.4.0'
+        assert data['software']['version'] == '0.5.0'
 
 
 class TestTenantEnforcement:

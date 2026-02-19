@@ -42,6 +42,12 @@ def index():
     """Render the main page of the MCP server."""
     return render_template('index.html')
 
+
+@app.route('/r6-dashboard')
+def r6_dashboard():
+    """Render the R6 FHIR Agent Dashboard — demo-worthy interactive showcase."""
+    return render_template('r6_dashboard.html')
+
 @app.route('/documentation')
 def documentation():
     """Render the API documentation page."""

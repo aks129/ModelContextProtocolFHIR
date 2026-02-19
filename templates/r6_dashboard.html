@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+
+{% block title %}R6 FHIR Agent Dashboard{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/r6-dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<div class="r6-hero" style="margin: -1.5rem -12px 1.5rem; padding-left: 1.5rem; padding-right: 1.5rem;">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+    <div>
+      <h1><i class="fas fa-fire me-2" style="color:var(--r6-primary)"></i>R6 FHIR Agent Dashboard</h1>
+      <p class="lead mb-0">Interactive showcase of the R6-only, agent-first FHIR server with MCP tool orchestration</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="r6-btn r6-btn-primary" onclick="startWalkthrough()">
+        <i class="fas fa-play"></i> Run Full Demo
+      </button>
+      <button class="r6-btn r6-btn-outline" onclick="loadSystemHealth()">
+        <i class="fas fa-sync"></i> Refresh
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Walkthrough Bar (hidden until activated) -->
+<div id="walkthrough-bar" class="r6-walkthrough-bar" style="display:none">
+  <i class="fas fa-magic"></i>
+  <span class="step-counter">1/6</span>
+  <span class="step-text">Loading...</span>
+  <button class="r6-btn r6-btn-sm r6-btn-outline" onclick="document.getElementById('walkthrough-bar').style.display='none'; walkthroughIdx=99;" style="border-color:white;color:white">Stop</button>
+</div>
+
+<!-- Stat Cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-status"><span class="r6-spinner"></span></div>
+      <div class="stat-label">Status</div>
+    </div>
+  </div>
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-version">—</div>
+      <div class="stat-label">Version</div>
+    </div>
+  </div>
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-fhir">—</div>
+      <div class="stat-label">FHIR Version</div>
+    </div>
+  </div>
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-resources">—</div>
+      <div class="stat-label">Resource Types</div>
+    </div>
+  </div>
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-operations">—</div>
+      <div class="stat-label">Operations</div>
+    </div>
+  </div>
+  <div class="col-6 col-md">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-audits">0</div>
+      <div class="stat-label">Audit Events</div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- Left Column: Interactive Panels -->
+  <div class="col-lg-8">
+
+    <!-- Patient Explorer -->
+    <div class="r6-panel" id="patient-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-user-injured"></i>
+        <h3>Patient Explorer</h3>
+        <span class="r6-tag r6-tag-read">Read/Write</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Create a sample patient, read it back with PHI redaction, and search. Identifiers are masked, addresses stripped, telecom redacted.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-load-patient" onclick="loadSamplePatient()">
+            <i class="fas fa-plus"></i> Create + Read Patient
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-search-patients" onclick="searchPatients()">
+            <i class="fas fa-search"></i> Search All
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-patient-count" onclick="searchPatientCount()">
+            <i class="fas fa-hashtag"></i> _summary=count
+          </button>
+          <span style="font-size:0.78rem;color:var(--r6-text-muted);align-self:center">ETag: <code id="patient-etag">—</code></span>
+        </div>
+        <div class="r6-json-output" id="patient-result"></div>
+      </div>
+    </div>
+
+    <!-- Agent Tool Loop -->
+    <div class="r6-panel" id="tools-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-robot"></i>
+        <h3>MCP Agent Tool Loop</h3>
+        <span class="r6-tag r6-tag-clinical">MCP</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Select a tool, provide input, and execute. Read tools require no step-up; write tools require HMAC authorization. All emit AuditEvents.
+        </p>
+        <div class="row">
+          <div class="col-md-4">
+            <div id="tool-cards"></div>
+          </div>
+          <div class="col-md-8">
+            <div class="mb-2">
+              <label style="font-size:0.78rem;color:var(--r6-text-muted)">Selected: <strong id="selected-tool">—</strong></label>
+            </div>
+            <textarea class="r6-input" id="tool-input" rows="6" placeholder="Tool input (JSON)...">{}</textarea>
+            <div class="d-flex gap-2 mt-2">
+              <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-exec-tool" onclick="executeSelectedTool()">
+                <i class="fas fa-play"></i> Execute Tool
+              </button>
+            </div>
+            <div class="r6-json-output mt-3" id="tool-result"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Context Builder -->
+    <div class="r6-panel" id="context-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-layer-group"></i>
+        <h3>Context Envelope Builder</h3>
+        <span class="r6-tag r6-tag-read">Bundle</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Ingest a patient-centric Bundle to build a bounded context envelope (TTL 30 min). The envelope provides a policy-stamped, time-limited view for agent context windows.
+        </p>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <button class="r6-btn r6-btn-success r6-btn-sm" id="btn-ingest" onclick="ingestDemoBundle()">
+            <i class="fas fa-file-import"></i> Ingest Demo Bundle
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-get-context" onclick="retrieveContext()">
+            <i class="fas fa-eye"></i> Retrieve Context
+          </button>
+          <span style="font-size:0.78rem;color:var(--r6-text-muted);align-self:center">Context: <code id="last-context-id">—</code></span>
+        </div>
+        <div class="r6-json-output" id="context-result"></div>
+      </div>
+    </div>
+
+    <!-- De-identification -->
+    <div class="r6-panel" id="deid-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-user-secret"></i>
+        <h3>HIPAA Safe Harbor De-identification</h3>
+        <span class="r6-tag r6-tag-security">PHI</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Side-by-side comparison: standard redacted read vs. full Safe Harbor de-identification (45 CFR 164.514(b)). Names, IDs, addresses, dates generalized to year.
+        </p>
+        <button class="r6-btn r6-btn-danger r6-btn-sm mb-3" id="btn-deidentify" onclick="runDeidentify()">
+          <i class="fas fa-mask"></i> De-identify Patient
+        </button>
+        <div class="deid-compare">
+          <div class="deid-side">
+            <div class="deid-label deid-label-raw">Standard Redaction</div>
+            <div class="r6-json-output" id="deid-raw" style="max-height:300px"></div>
+          </div>
+          <div class="deid-side">
+            <div class="deid-label deid-label-safe">Safe Harbor De-identified</div>
+            <div class="r6-json-output" id="deid-safe" style="max-height:300px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Human-in-the-Loop -->
+    <div class="r6-panel" id="hitl-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-hand-paper"></i>
+        <h3>Human-in-the-Loop Enforcement</h3>
+        <span class="r6-tag r6-tag-clinical">Clinical Safety</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Clinical writes (Observation, Condition, etc.) require <code>X-Human-Confirmed: true</code> header. Without it, the server returns HTTP 428 Precondition Required. This prevents autonomous agent writes to clinical data without human review.
+        </p>
+        <button class="r6-btn r6-btn-primary r6-btn-sm mb-3" id="btn-hitl-demo" onclick="demoHumanInLoop()">
+          <i class="fas fa-vial"></i> Run HITL Demo (2 steps)
+        </button>
+        <div class="r6-json-output" id="hitl-result"></div>
+      </div>
+    </div>
+
+    <!-- OAuth 2.1 + PKCE -->
+    <div class="r6-panel" id="oauth-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-shield-alt"></i>
+        <h3>OAuth 2.1 + PKCE Flow</h3>
+        <span class="r6-tag r6-tag-security">Security</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Full OAuth 2.1 flow: Dynamic client registration (RFC 7591), Authorization with PKCE S256, Token exchange, and Revocation (RFC 7009). SMART-on-FHIR v2 compatible.
+        </p>
+        <button class="r6-btn r6-btn-primary r6-btn-sm mb-3" id="btn-oauth-demo" onclick="demoOAuthFlow()">
+          <i class="fas fa-lock"></i> Run OAuth Flow (4 steps)
+        </button>
+        <div class="r6-json-output" id="oauth-result"></div>
+      </div>
+    </div>
+
+    <!-- $validate -->
+    <div class="r6-panel" id="validate-panel">
+      <div class="r6-panel-header">
+        <i class="fas fa-check-circle"></i>
+        <h3>Resource Validation ($validate)</h3>
+        <span class="r6-tag r6-tag-read">Read-only</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+          Validate a FHIR R6 resource against structural rules. Agent proposals must pass validation before commit.
+        </p>
+        <textarea class="r6-input mb-2" id="validate-input" rows="5">{
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {
+    "coding": [{"system": "http://loinc.org", "code": "2339-0"}]
+  }
+}</textarea>
+        <button class="r6-btn r6-btn-primary r6-btn-sm mb-3" id="btn-validate" onclick="validateDemo()">
+          <i class="fas fa-check"></i> Validate
+        </button>
+        <div class="r6-json-output" id="validate-result"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Column: Audit Feed + Info -->
+  <div class="col-lg-4">
+
+    <!-- Live Audit Feed -->
+    <div class="r6-panel" style="position:sticky;top:1rem">
+      <div class="r6-panel-header">
+        <i class="fas fa-stream"></i>
+        <h3>Live Audit Feed</h3>
+        <span class="r6-tag r6-tag-clinical">Append-Only</span>
+      </div>
+      <div class="r6-panel-body">
+        <div class="d-flex gap-2 mb-3">
+          <button class="r6-btn r6-btn-outline r6-btn-sm" onclick="refreshAuditFeed()">
+            <i class="fas fa-sync"></i> Refresh
+          </button>
+          <button class="r6-btn r6-btn-outline r6-btn-sm" id="btn-export-audit" onclick="exportAuditNDJSON()">
+            <i class="fas fa-download"></i> Export NDJSON
+          </button>
+        </div>
+        <div class="audit-feed" id="audit-feed">
+          <div class="text-muted" style="padding:1rem;font-size:0.85rem">No audit events yet. Interact with the panels to generate events.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Summary -->
+    <div class="r6-panel mt-3">
+      <div class="r6-panel-header">
+        <i class="fas fa-lock"></i>
+        <h3>Security Posture</h3>
+      </div>
+      <div class="r6-panel-body" style="font-size:0.82rem">
+        <div class="d-flex justify-content-between mb-2">
+          <span>Tenant Isolation</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> Enforced</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>HMAC Step-up Tokens</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> Required</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>PHI Redaction</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> All Reads</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>Human-in-the-Loop</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> Clinical</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>OAuth 2.1 + PKCE</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> S256</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>Audit Trail</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> Immutable</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>ETag Concurrency</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> If-Match</span>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span>Medical Disclaimer</span>
+          <span style="color:var(--r6-success)"><i class="fas fa-check-circle"></i> Injected</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Discovery Links -->
+    <div class="r6-panel mt-3">
+      <div class="r6-panel-header">
+        <i class="fas fa-globe"></i>
+        <h3>Discovery Endpoints</h3>
+      </div>
+      <div class="r6-panel-body" style="font-size:0.82rem">
+        <div class="mb-2">
+          <a href="/r6/fhir/metadata" target="_blank" class="text-decoration-none" style="color:var(--r6-info)">
+            <i class="fas fa-external-link-alt me-1"></i> /metadata (CapabilityStatement)
+          </a>
+        </div>
+        <div class="mb-2">
+          <a href="/r6/fhir/.well-known/oauth-authorization-server" target="_blank" class="text-decoration-none" style="color:var(--r6-info)">
+            <i class="fas fa-external-link-alt me-1"></i> /.well-known/oauth-authorization-server
+          </a>
+        </div>
+        <div class="mb-2">
+          <a href="/r6/fhir/.well-known/smart-configuration" target="_blank" class="text-decoration-none" style="color:var(--r6-info)">
+            <i class="fas fa-external-link-alt me-1"></i> /.well-known/smart-configuration
+          </a>
+        </div>
+        <div>
+          <a href="/r6/fhir/docs/privacy-policy" target="_blank" class="text-decoration-none" style="color:var(--r6-info)">
+            <i class="fas fa-external-link-alt me-1"></i> /docs/privacy-policy
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/r6-dashboard.js') }}"></script>
+{% endblock %}
