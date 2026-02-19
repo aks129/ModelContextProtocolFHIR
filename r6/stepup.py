@@ -53,7 +53,7 @@ def generate_step_up_token(tenant_id, agent_id=None,
         'exp': int(time.time()) + ttl_seconds,
         'tid': tenant_id,
         'sub': agent_id or 'system',
-        'nonce': secrets.token_hex(8)
+        'nonce': secrets.token_hex(16)
     }
     payload_b64 = base64.urlsafe_b64encode(
         json.dumps(payload, separators=(',', ':')).encode()

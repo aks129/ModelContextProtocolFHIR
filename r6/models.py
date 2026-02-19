@@ -140,6 +140,7 @@ class AuditEventRecord(db.Model):
     resource_type = db.Column(db.String(64), nullable=True)
     resource_id = db.Column(db.String(64), nullable=True)
     context_id = db.Column(db.String(64), nullable=True, index=True)
+    tenant_id = db.Column(db.String(64), nullable=True, index=True)
     agent_id = db.Column(db.String(128), nullable=True)
     outcome = db.Column(db.String(32), default='success')  # success, failure
     detail = db.Column(db.Text, nullable=True)

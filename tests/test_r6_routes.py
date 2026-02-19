@@ -37,6 +37,12 @@ class TestR6Metadata:
         assert 'validate' in op_names
         assert 'ingest-context' in op_names
 
+    def test_metadata_version_is_current(self, client):
+        """CapabilityStatement.software.version must match pyproject.toml."""
+        resp = client.get('/r6/fhir/metadata')
+        data = resp.get_json()
+        assert data['software']['version'] == '0.4.0'
+
 
 class TestTenantEnforcement:
     """Test mandatory tenant isolation."""
@@ -56,6 +62,20 @@ class TestTenantEnforcement:
     def test_metadata_exempt_from_tenant(self, client):
         resp = client.get('/r6/fhir/metadata')
         assert resp.status_code == 200
+
+    def test_invalid_tenant_id_format_rejected(self, client):
+        """Tenant IDs with special characters should be rejected."""
+        resp = client.get('/r6/fhir/Patient/test-1',
+                         headers={'X-Tenant-Id': 'bad tenant!@#'})
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert 'X-Tenant-Id must match' in data['issue'][0]['diagnostics']
+
+    def test_valid_tenant_id_formats(self, client):
+        """Valid tenant IDs with hyphens and underscores should work."""
+        resp = client.get('/r6/fhir/Patient/nonexistent',
+                         headers={'X-Tenant-Id': 'my-tenant_123'})
+        assert resp.status_code == 404  # Accepted but resource not found
 
 
 class TestStepUpToken:
@@ -178,6 +198,40 @@ class TestR6CRUD:
         assert resp.status_code == 404
 
 
+class TestETagConcurrency:
+    """Test ETag/If-Match concurrency control."""
+
+    def test_update_with_correct_etag(self, client, sample_patient, auth_headers):
+        """Update with matching If-Match should succeed."""
+        create_resp = client.post('/r6/fhir/Patient',
+                                  data=json.dumps(sample_patient),
+                                  content_type='application/json',
+                                  headers=auth_headers)
+        etag = create_resp.headers.get('ETag')
+        assert etag is not None
+
+        sample_patient['gender'] = 'female'
+        resp = client.put(f'/r6/fhir/Patient/{sample_patient["id"]}',
+                         data=json.dumps(sample_patient),
+                         content_type='application/json',
+                         headers={**auth_headers, 'If-Match': etag})
+        assert resp.status_code == 200
+
+    def test_update_with_stale_etag_returns_409(self, client, sample_patient, auth_headers):
+        """Update with mismatched If-Match should return 409 Conflict."""
+        client.post('/r6/fhir/Patient',
+                    data=json.dumps(sample_patient),
+                    content_type='application/json',
+                    headers=auth_headers)
+
+        sample_patient['gender'] = 'female'
+        resp = client.put(f'/r6/fhir/Patient/{sample_patient["id"]}',
+                         data=json.dumps(sample_patient),
+                         content_type='application/json',
+                         headers={**auth_headers, 'If-Match': 'W/"999"'})
+        assert resp.status_code == 409
+
+
 class TestAuditEventImmutability:
     """Test that AuditEvent is system-managed and append-only."""
 
@@ -209,7 +263,6 @@ class TestR6Validate:
         assert data['resourceType'] == 'OperationOutcome'
 
     def test_validate_invalid_observation(self, client, tenant_headers):
-        # Observation missing required status and code
         invalid_obs = {'resourceType': 'Observation'}
         resp = client.post('/r6/fhir/Observation/$validate',
                           data=json.dumps(invalid_obs),
@@ -243,20 +296,30 @@ class TestR6ContextIngestion:
         assert data['patient_ref'] == 'Patient/test-patient-1'
 
     def test_get_context_envelope(self, client, sample_bundle, tenant_headers):
-        # Ingest
         ingest_resp = client.post('/r6/fhir/Bundle/$ingest-context',
                                   data=json.dumps(sample_bundle),
                                   content_type='application/json',
                                   headers=tenant_headers)
         context_id = ingest_resp.get_json()['context_id']
 
-        # Get context
         resp = client.get(f'/r6/fhir/context/{context_id}',
                          headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data['context_id'] == context_id
         assert data['item_count'] == 2
+
+    def test_get_context_cross_tenant_blocked(self, client, sample_bundle, tenant_headers):
+        """Context envelopes should be tenant-isolated."""
+        ingest_resp = client.post('/r6/fhir/Bundle/$ingest-context',
+                                  data=json.dumps(sample_bundle),
+                                  content_type='application/json',
+                                  headers=tenant_headers)
+        context_id = ingest_resp.get_json()['context_id']
+
+        resp = client.get(f'/r6/fhir/context/{context_id}',
+                         headers={'X-Tenant-Id': 'other-tenant'})
+        assert resp.status_code == 404
 
     def test_ingest_empty_bundle_fails(self, client, tenant_headers):
         empty_bundle = {'resourceType': 'Bundle', 'type': 'collection', 'entry': []}
@@ -273,23 +336,35 @@ class TestR6ContextIngestion:
                           headers=tenant_headers)
         assert resp.status_code == 400
 
+    def test_ingest_invalid_bundle_type(self, client, tenant_headers):
+        """Bundles with invalid type should be rejected."""
+        bad_bundle = {
+            'resourceType': 'Bundle',
+            'type': 'invalid-type',
+            'entry': [{'resource': {'resourceType': 'Patient', 'id': 'p1'}}]
+        }
+        resp = client.post('/r6/fhir/Bundle/$ingest-context',
+                          data=json.dumps(bad_bundle),
+                          content_type='application/json',
+                          headers=tenant_headers)
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert 'Bundle.type' in data['issue'][0]['diagnostics']
+
 
 class TestR6AuditEvents:
     """Test AuditEvent recording and querying."""
 
     def test_read_generates_audit_event(self, client, sample_patient,
                                          auth_headers, tenant_headers):
-        # Create a resource
         client.post('/r6/fhir/Patient',
                     data=json.dumps(sample_patient),
                     content_type='application/json',
                     headers=auth_headers)
 
-        # Read it
         client.get(f'/r6/fhir/Patient/{sample_patient["id"]}',
                   headers=tenant_headers)
 
-        # Check audit events
         resp = client.get('/r6/fhir/AuditEvent',
                          headers=tenant_headers)
         assert resp.status_code == 200
@@ -297,19 +372,31 @@ class TestR6AuditEvents:
         assert data['total'] >= 1
 
     def test_audit_events_filterable_by_context(self, client, sample_bundle, tenant_headers):
-        # Ingest a bundle (creates a context and audit events)
         ingest_resp = client.post('/r6/fhir/Bundle/$ingest-context',
                                   data=json.dumps(sample_bundle),
                                   content_type='application/json',
                                   headers=tenant_headers)
         context_id = ingest_resp.get_json()['context_id']
 
-        # Query audit events for this context
         resp = client.get(f'/r6/fhir/AuditEvent?context-id={context_id}',
                          headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data['resourceType'] == 'Bundle'
+
+    def test_audit_events_tenant_isolated(self, client, sample_patient,
+                                            auth_headers, tenant_headers):
+        """Audit events from one tenant should not be visible to another."""
+        client.post('/r6/fhir/Patient',
+                    data=json.dumps(sample_patient),
+                    content_type='application/json',
+                    headers=auth_headers)
+
+        resp = client.get('/r6/fhir/AuditEvent',
+                         headers={'X-Tenant-Id': 'other-tenant'})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] == 0
 
 
 class TestR6ImportStub:
@@ -335,6 +422,40 @@ class TestR6ImportStub:
         assert data['_import_stub']['entries'][0]['transform_status'] == 'needs-transform'
 
 
+class TestSearchFeatures:
+    """Test FHIR search features including _summary and patient reference."""
+
+    def test_summary_count(self, client, sample_patient, auth_headers, tenant_headers):
+        """_summary=count should return total without entries."""
+        client.post('/r6/fhir/Patient',
+                    data=json.dumps(sample_patient),
+                    content_type='application/json',
+                    headers=auth_headers)
+
+        resp = client.get('/r6/fhir/Patient?_summary=count', headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] >= 1
+        assert 'entry' not in data
+
+    def test_patient_ref_validation(self, client, tenant_headers):
+        """Invalid patient reference format should be rejected."""
+        resp = client.get('/r6/fhir/Observation?patient=bad-ref',
+                         headers=tenant_headers)
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert 'Patient/' in data['issue'][0]['diagnostics']
+
+    def test_valid_patient_ref_search(self, client, tenant_headers):
+        """Valid patient reference format should work."""
+        resp = client.get('/r6/fhir/Observation?patient=Patient/test-1',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['resourceType'] == 'Bundle'
+        assert data['type'] == 'searchset'
+
+
 # ===== Phase 2-5: New Feature Tests =====
 
 
@@ -342,7 +463,6 @@ class TestOAuthDiscovery:
     """Test OAuth 2.1 and SMART-on-FHIR discovery endpoints."""
 
     def test_oauth_discovery_endpoint(self, client):
-        """OAuth authorization server metadata should be publicly accessible."""
         resp = client.get('/r6/fhir/.well-known/oauth-authorization-server')
         assert resp.status_code == 200
         data = resp.get_json()
@@ -353,7 +473,6 @@ class TestOAuthDiscovery:
         assert 'S256' in data['code_challenge_methods_supported']
 
     def test_smart_configuration(self, client):
-        """SMART App Launch v2 configuration should be accessible."""
         resp = client.get('/r6/fhir/.well-known/smart-configuration')
         assert resp.status_code == 200
         data = resp.get_json()
@@ -367,7 +486,6 @@ class TestOAuthFlow:
     """Test OAuth 2.1 authorization code flow with PKCE."""
 
     def test_dynamic_client_registration(self, client, tenant_headers):
-        """Clients should be able to register dynamically."""
         resp = client.post('/r6/fhir/oauth/register',
                           data=json.dumps({
                               'client_name': 'Test Agent',
@@ -383,18 +501,70 @@ class TestOAuthFlow:
         assert data['client_name'] == 'Test Agent'
 
     def test_authorize_requires_pkce(self, client, tenant_headers):
-        """Authorization endpoint should require PKCE code_challenge."""
-        resp = client.get('/r6/fhir/oauth/authorize?client_id=test&redirect_uri=http://localhost',
-                         headers=tenant_headers)
+        reg_resp = client.post('/r6/fhir/oauth/register',
+                              data=json.dumps({
+                                  'client_name': 'PKCE Test',
+                                  'redirect_uris': ['http://localhost'],
+                              }),
+                              content_type='application/json',
+                              headers=tenant_headers)
+        client_id = reg_resp.get_json()['client_id']
+
+        resp = client.get(
+            f'/r6/fhir/oauth/authorize?client_id={client_id}'
+            f'&redirect_uri=http://localhost',
+            headers=tenant_headers)
         assert resp.status_code == 400
         data = resp.get_json()
         assert 'PKCE' in data.get('error_description', '')
 
-    def test_full_oauth_flow(self, client, tenant_headers):
-        """Test complete OAuth 2.1 flow: register -> authorize -> token."""
+    def test_authorize_rejects_unregistered_redirect_uri(self, client, tenant_headers):
+        """Authorization should reject redirect URIs not registered for the client."""
         import hashlib, base64, secrets
 
-        # 1. Register client
+        reg_resp = client.post('/r6/fhir/oauth/register',
+                              data=json.dumps({
+                                  'client_name': 'Redirect Test',
+                                  'redirect_uris': ['http://localhost/safe-callback'],
+                              }),
+                              content_type='application/json',
+                              headers=tenant_headers)
+        client_id = reg_resp.get_json()['client_id']
+
+        code_verifier = secrets.token_urlsafe(32)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b'=').decode()
+
+        resp = client.get(
+            f'/r6/fhir/oauth/authorize?client_id={client_id}'
+            f'&redirect_uri=https://evil.com/steal'
+            f'&code_challenge={code_challenge}'
+            f'&code_challenge_method=S256',
+            headers=tenant_headers)
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert 'redirect_uri' in data.get('error_description', '')
+
+    def test_authorize_rejects_unregistered_client(self, client, tenant_headers):
+        import hashlib, base64, secrets
+
+        code_verifier = secrets.token_urlsafe(32)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b'=').decode()
+
+        resp = client.get(
+            f'/r6/fhir/oauth/authorize?client_id=nonexistent-client'
+            f'&redirect_uri=http://localhost/cb'
+            f'&code_challenge={code_challenge}'
+            f'&code_challenge_method=S256',
+            headers=tenant_headers)
+        assert resp.status_code == 401
+
+    def test_full_oauth_flow(self, client, tenant_headers):
+        import hashlib, base64, secrets
+
         reg_resp = client.post('/r6/fhir/oauth/register',
                               data=json.dumps({
                                   'client_name': 'Flow Test',
@@ -404,13 +574,11 @@ class TestOAuthFlow:
                               headers=tenant_headers)
         client_id = reg_resp.get_json()['client_id']
 
-        # 2. Generate PKCE
         code_verifier = secrets.token_urlsafe(32)
         code_challenge = base64.urlsafe_b64encode(
             hashlib.sha256(code_verifier.encode()).digest()
         ).rstrip(b'=').decode()
 
-        # 3. Authorize
         auth_resp = client.get(
             f'/r6/fhir/oauth/authorize?client_id={client_id}'
             f'&redirect_uri=http://localhost/cb'
@@ -424,7 +592,6 @@ class TestOAuthFlow:
         code = auth_data['code']
         assert auth_data['state'] == 'test-state'
 
-        # 4. Exchange code for token
         token_resp = client.post('/r6/fhir/oauth/token',
                                 data=json.dumps({
                                     'grant_type': 'authorization_code',
@@ -441,12 +608,13 @@ class TestOAuthFlow:
         assert token_data['scope'] == 'fhir.read'
 
     def test_token_revocation(self, client, tenant_headers):
-        """Revoked tokens should be rejected."""
         import hashlib, base64, secrets
 
-        # Quick flow to get a token
         reg_resp = client.post('/r6/fhir/oauth/register',
-                              data=json.dumps({'client_name': 'Revoke Test'}),
+                              data=json.dumps({
+                                  'client_name': 'Revoke Test',
+                                  'redirect_uris': ['http://localhost/cb'],
+                              }),
                               content_type='application/json',
                               headers=tenant_headers)
         client_id = reg_resp.get_json()['client_id']
@@ -473,7 +641,6 @@ class TestOAuthFlow:
                                 headers=tenant_headers)
         access_token = token_resp.get_json()['access_token']
 
-        # Revoke
         revoke_resp = client.post('/r6/fhir/oauth/revoke',
                                   data=json.dumps({'token': access_token}),
                                   content_type='application/json',
@@ -486,29 +653,21 @@ class TestDeidentification:
 
     def test_deidentify_strips_identifiers(self, client, sample_patient,
                                             auth_headers, tenant_headers):
-        """$deidentify should remove all Safe Harbor identifiers."""
-        # Create a patient
         client.post('/r6/fhir/Patient',
                     data=json.dumps(sample_patient),
                     content_type='application/json',
                     headers=auth_headers)
 
-        # De-identify
         resp = client.get(f'/r6/fhir/Patient/{sample_patient["id"]}/$deidentify',
                          headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
 
-        # Name should be removed (Safe Harbor)
         assert 'name' not in data
-        # Birth date should be year-only
         if 'birthDate' in data:
             assert len(data['birthDate']) == 4
-        # Identifier should be removed
         assert 'identifier' not in data
-        # Address should be removed
         assert 'address' not in data
-        # Should have ANONYED security tag
         security = data.get('meta', {}).get('security', [])
         codes = [s.get('code') for s in security]
         assert 'ANONYED' in codes
@@ -523,8 +682,6 @@ class TestAuditExport:
     """Test audit trail NDJSON export."""
 
     def test_export_ndjson(self, client, sample_patient, auth_headers, tenant_headers):
-        """Audit export should return NDJSON by default."""
-        # Generate some audit events
         client.post('/r6/fhir/Patient',
                     data=json.dumps(sample_patient),
                     content_type='application/json',
@@ -536,7 +693,6 @@ class TestAuditExport:
         assert 'ndjson' in resp.content_type
 
     def test_export_fhir_bundle(self, client, sample_patient, auth_headers, tenant_headers):
-        """Audit export should support FHIR Bundle format."""
         client.post('/r6/fhir/Patient',
                     data=json.dumps(sample_patient),
                     content_type='application/json',
@@ -548,6 +704,18 @@ class TestAuditExport:
         data = json.loads(resp.data)
         assert data['resourceType'] == 'Bundle'
         assert data['type'] == 'collection'
+
+    def test_export_tenant_isolated(self, client, sample_patient, auth_headers):
+        client.post('/r6/fhir/Patient',
+                    data=json.dumps(sample_patient),
+                    content_type='application/json',
+                    headers=auth_headers)
+
+        resp = client.get('/r6/fhir/AuditEvent/$export?_format=fhir-bundle',
+                         headers={'X-Tenant-Id': 'other-tenant'})
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data['total'] == 0
 
 
 class TestPrivacyPolicy:
@@ -575,21 +743,18 @@ class TestHealthCompliance:
     """Test medical disclaimer and health compliance features."""
 
     def test_disclaimer_added_to_clinical_data(self):
-        """Clinical resources should get a disclaimer added."""
         from r6.health_compliance import add_disclaimer
         obs = {'resourceType': 'Observation', 'status': 'final'}
         result = add_disclaimer(obs)
         assert '_disclaimer' in result
 
     def test_disclaimer_not_added_to_non_clinical(self):
-        """Non-clinical resources should not get a disclaimer."""
         from r6.health_compliance import add_disclaimer
         patient = {'resourceType': 'Patient', 'name': [{'family': 'Test'}]}
         result = add_disclaimer(patient)
         assert '_disclaimer' not in result
 
     def test_deidentify_module(self):
-        """De-identification should remove Safe Harbor identifiers."""
         from r6.health_compliance import deidentify_resource
         resource = {
             'resourceType': 'Patient',
@@ -605,8 +770,104 @@ class TestHealthCompliance:
         assert 'identifier' not in result
         assert 'telecom' not in result
         assert result.get('birthDate') == '1990'
-        # ID should be pseudonymized
         assert result['id'] != 'test-123'
+
+    def test_deidentify_strips_codeable_concept_text(self):
+        from r6.health_compliance import deidentify_resource
+        resource = {
+            'resourceType': 'Observation',
+            'id': 'obs-1',
+            'status': 'final',
+            'code': {
+                'coding': [{'system': 'http://loinc.org', 'code': '2339-0'}],
+                'text': 'Blood Glucose from Springfield Regional'
+            }
+        }
+        result = deidentify_resource(resource)
+        assert 'text' not in result.get('code', {})
+
+
+class TestHumanInTheLoop:
+    """Test human-in-the-loop enforcement for clinical writes."""
+
+    def test_clinical_write_requires_human_confirmation(self, client, auth_headers):
+        observation = {
+            'resourceType': 'Observation',
+            'id': 'obs-hitl-test',
+            'status': 'final',
+            'code': {
+                'coding': [{'system': 'http://loinc.org', 'code': '2339-0'}]
+            }
+        }
+        resp = client.post('/r6/fhir/Observation',
+                          data=json.dumps(observation),
+                          content_type='application/json',
+                          headers=auth_headers)
+        assert resp.status_code == 428
+        data = resp.get_json()
+        assert 'X-Human-Confirmed' in data['issue'][0]['diagnostics']
+
+    def test_clinical_write_with_confirmation_proceeds(self, client, auth_headers):
+        observation = {
+            'resourceType': 'Observation',
+            'id': 'obs-hitl-ok',
+            'status': 'final',
+            'code': {
+                'coding': [{'system': 'http://loinc.org', 'code': '2339-0'}]
+            }
+        }
+        headers = {**auth_headers, 'X-Human-Confirmed': 'true'}
+        resp = client.post('/r6/fhir/Observation',
+                          data=json.dumps(observation),
+                          content_type='application/json',
+                          headers=headers)
+        assert resp.status_code == 201
+
+    def test_non_clinical_write_no_confirmation_needed(self, client, sample_patient, auth_headers):
+        resp = client.post('/r6/fhir/Patient',
+                          data=json.dumps(sample_patient),
+                          content_type='application/json',
+                          headers=auth_headers)
+        assert resp.status_code == 201
+
+
+class TestMedicalDisclaimerOnResponses:
+    """Test that medical disclaimers are added to clinical read responses."""
+
+    def test_observation_read_has_disclaimer(self, client, auth_headers, tenant_headers):
+        obs = {
+            'resourceType': 'Observation',
+            'id': 'obs-disclaim',
+            'status': 'final',
+            'code': {
+                'coding': [{'system': 'http://loinc.org', 'code': '2339-0'}]
+            }
+        }
+        headers = {**auth_headers, 'X-Human-Confirmed': 'true'}
+        client.post('/r6/fhir/Observation',
+                    data=json.dumps(obs),
+                    content_type='application/json',
+                    headers=headers)
+
+        resp = client.get('/r6/fhir/Observation/obs-disclaim',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert '_disclaimer' in data
+        assert 'medical advice' in data['_disclaimer']['text'].lower()
+
+    def test_patient_read_no_disclaimer(self, client, sample_patient,
+                                         auth_headers, tenant_headers):
+        client.post('/r6/fhir/Patient',
+                    data=json.dumps(sample_patient),
+                    content_type='application/json',
+                    headers=auth_headers)
+
+        resp = client.get(f'/r6/fhir/Patient/{sample_patient["id"]}',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert '_disclaimer' not in data
 
 
 class TestRateLimitHeaders:
@@ -615,6 +876,5 @@ class TestRateLimitHeaders:
     def test_rate_limit_headers_present(self, client, tenant_headers):
         resp = client.get('/r6/fhir/Patient/nonexistent',
                          headers=tenant_headers)
-        # Rate limit headers should be present
         assert 'X-RateLimit-Limit' in resp.headers
         assert 'X-RateLimit-Remaining' in resp.headers

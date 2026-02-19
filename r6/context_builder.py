@@ -12,7 +12,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from models import db
 from r6.models import R6Resource, ContextEnvelope, ContextItem
-from r6.redaction import apply_redaction
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +68,14 @@ class ContextBuilder:
                     logger.debug(f'Skipping unsupported resource type: {resource_type}')
                     continue
 
-                # Apply redaction before storage (shared module)
-                redacted = apply_redaction(resource)
-                resource_json = json.dumps(redacted, separators=(',', ':'), sort_keys=True)
+                # Store canonical JSON (redaction applied at read-time, not write-time)
+                resource_json = json.dumps(resource, separators=(',', ':'), sort_keys=True)
 
-                # Create or update the resource
+                # Create or update the resource (tenant-scoped)
                 resource_id = resource.get('id', str(uuid.uuid4()))
                 existing = R6Resource.query.filter_by(
-                    id=resource_id, resource_type=resource_type
+                    id=resource_id, resource_type=resource_type,
+                    tenant_id=tenant_id
                 ).first()
 
                 if existing:

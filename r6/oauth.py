@@ -142,6 +142,15 @@ def register_oauth_routes(blueprint):
             return jsonify({'error': 'invalid_request',
                           'error_description': 'client_id and redirect_uri required'}), 400
 
+        # Validate client exists and redirect_uri is registered
+        registered_client = _registered_clients.get(client_id)
+        if not registered_client:
+            return jsonify({'error': 'invalid_client',
+                          'error_description': 'Client not registered'}), 401
+        if redirect_uri not in registered_client.get('redirect_uris', []):
+            return jsonify({'error': 'invalid_request',
+                          'error_description': 'redirect_uri not registered for this client'}), 400
+
         if not code_challenge:
             return jsonify({'error': 'invalid_request',
                           'error_description': 'PKCE code_challenge required (RFC 7636)'}), 400
@@ -156,6 +165,7 @@ def register_oauth_routes(blueprint):
             'client_id': client_id,
             'redirect_uri': redirect_uri,
             'code_challenge': code_challenge,
+            'code_challenge_method': code_challenge_method,
             'scopes': scope.split(),
             'tenant_id': request.headers.get('X-Tenant-Id', 'default'),
             'exp': time.time() + 600,  # 10 minutes
@@ -202,6 +212,12 @@ def register_oauth_routes(blueprint):
         if client_id and auth_code['client_id'] != client_id:
             return jsonify({'error': 'invalid_grant',
                           'error_description': 'Client ID mismatch'}), 400
+
+        # Verify redirect_uri matches what was used in authorize
+        redirect_uri = body.get('redirect_uri')
+        if redirect_uri and redirect_uri != auth_code.get('redirect_uri'):
+            return jsonify({'error': 'invalid_grant',
+                          'error_description': 'redirect_uri mismatch'}), 400
 
         # Verify PKCE (S256)
         challenge = base64.urlsafe_b64encode(

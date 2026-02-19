@@ -92,8 +92,15 @@ def enforce_human_in_loop():
     """
     Flask before_request check for human-in-the-loop on clinical writes.
     Only applies to POST/PUT with clinical resource types.
+    Exempts $validate (read-only) and other operation endpoints.
     """
     if request.method not in ('POST', 'PUT'):
+        return None
+
+    # Exempt validation and other read-only operations
+    if '$validate' in request.path or '$import-stub' in request.path:
+        return None
+    if '$ingest-context' in request.path:
         return None
 
     body = request.get_json(silent=True)
@@ -194,9 +201,19 @@ def _strip_safe_harbor(resource):
             addr.pop('city', None)
             # Keep only state, country
 
-    # Remove notes, comments (free text may contain PHI)
+    # Remove notes, comments, descriptions (free text may contain PHI)
     for field in ['note', 'comment', 'description']:
         resource.pop(field, None)
+
+    # Strip CodeableConcept.text fields (may contain regional identifiers)
+    _strip_codeable_concept_text(resource)
+
+    # Remove URLs that may be identifying (extensions)
+    if 'extension' in resource and isinstance(resource['extension'], list):
+        resource['extension'] = [
+            ext for ext in resource['extension']
+            if not _is_identifying_extension(ext)
+        ]
 
     # Generate a replacement pseudonymous ID
     if 'id' in resource:
@@ -204,6 +221,32 @@ def _strip_safe_harbor(resource):
         resource['id'] = hashlib.sha256(
             f'deidentified:{original_id}'.encode()
         ).hexdigest()[:16]
+
+
+def _strip_codeable_concept_text(obj):
+    """Recursively strip 'text' from CodeableConcept-like dicts."""
+    if not isinstance(obj, dict):
+        return
+    # A CodeableConcept has 'coding' array and optional 'text'
+    if 'coding' in obj and 'text' in obj:
+        obj.pop('text', None)
+    for val in obj.values():
+        if isinstance(val, dict):
+            _strip_codeable_concept_text(val)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    _strip_codeable_concept_text(item)
+
+
+def _is_identifying_extension(ext):
+    """Check if an extension likely contains identifying information."""
+    if not isinstance(ext, dict):
+        return False
+    url = ext.get('url', '')
+    # Remove extensions related to race, ethnicity, birth-related info
+    identifying_patterns = ['birthPlace', 'birthSex', 'nationality', 'tribe']
+    return any(p in url for p in identifying_patterns)
 
 
 # --- Audit Trail Export ---

@@ -54,8 +54,21 @@ validator = R6Validator()
 # Valid FHIR id pattern
 _FHIR_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-.]{1,64}$')
 
+# Valid tenant_id pattern: alphanumeric, hyphens, underscores, 1-64 chars
+_TENANT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]{1,64}$')
+
 # AuditEvent is system-managed — block external CRUD
 _SYSTEM_MANAGED_TYPES = {'AuditEvent'}
+
+# Valid Bundle types per FHIR spec
+_VALID_BUNDLE_TYPES = {
+    'document', 'message', 'transaction', 'transaction-response',
+    'batch', 'batch-response', 'history', 'searchset', 'collection',
+    'subscription-notification',
+}
+
+# Valid FHIR search patient reference pattern
+_PATIENT_REF_PATTERN = re.compile(r'^Patient/[A-Za-z0-9\-.]{1,64}$')
 
 
 # --- Tenant Enforcement ---
@@ -80,6 +93,26 @@ def enforce_tenant_id():
                 'diagnostics': 'X-Tenant-Id header is required'
             }]
         }), 400
+    # Validate tenant_id format
+    if not _TENANT_ID_PATTERN.match(tenant_id):
+        return jsonify({
+            'resourceType': 'OperationOutcome',
+            'issue': [{
+                'severity': 'error',
+                'code': 'invalid',
+                'diagnostics': 'X-Tenant-Id must match [a-zA-Z0-9_-]{1,64}'
+            }]
+        }), 400
+
+
+# --- Human-in-the-Loop Enforcement ---
+
+@r6_blueprint.before_request
+def check_human_confirmation():
+    """Enforce human-in-the-loop for clinical writes."""
+    result = enforce_human_in_loop()
+    if result:
+        return result
 
 
 @r6_blueprint.route('/metadata', methods=['GET'])
@@ -97,7 +130,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Showcase',
-            'version': '0.2.0'
+            'version': '0.4.0'
         },
         'implementation': {
             'description': 'R6-only Agent-First FHIR Server Showcase',
@@ -205,9 +238,12 @@ def create_resource(resource_type):
                                   'Failed to store resource'), 500
 
     record_audit_event('create', resource_type, resource.id,
-                       agent_id=request.headers.get('X-Agent-Id'))
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id)
 
-    response = jsonify(resource.to_fhir_json())
+    fhir_json = resource.to_fhir_json()
+    fhir_json = add_disclaimer(fhir_json, resource_type)
+    response = jsonify(fhir_json)
     response.status_code = 201
     response.headers['Location'] = f'/r6/fhir/{resource_type}/{resource.id}'
     response.headers['ETag'] = f'W/"{resource.version_id}"'
@@ -234,11 +270,13 @@ def read_resource(resource_type, resource_id):
 
     record_audit_event('read', resource_type, resource_id,
                        agent_id=request.headers.get('X-Agent-Id'),
-                       context_id=request.headers.get('X-Context-Id'))
+                       context_id=request.headers.get('X-Context-Id'),
+                       tenant_id=tenant_id)
 
     # Apply redaction on all reads — consistent with context envelope behavior
     fhir_json = resource.to_fhir_json()
     redacted = apply_redaction(fhir_json)
+    redacted = add_disclaimer(redacted, resource_type)
 
     response = jsonify(redacted)
     response.headers['ETag'] = f'W/"{resource.version_id}"'
@@ -293,6 +331,17 @@ def update_resource(resource_type, resource_id):
         return _operation_outcome('error', 'not-found',
                                   f'{resource_type}/{resource_id} not found'), 404
 
+    # ETag/If-Match concurrency control
+    if_match = request.headers.get('If-Match')
+    if if_match:
+        current_etag = f'W/"{resource.version_id}"'
+        # Normalize: strip W/ prefix and quotes for comparison
+        expected = if_match.strip().lstrip('W/').strip('"')
+        actual = str(resource.version_id)
+        if expected != actual:
+            return _operation_outcome('error', 'conflict',
+                                      'Resource has been modified (ETag mismatch)'), 409
+
     # Run $validate pre-commit
     validation_result = validator.validate_resource(body)
     if not validation_result['valid']:
@@ -310,9 +359,12 @@ def update_resource(resource_type, resource_id):
                                   'Failed to update resource'), 500
 
     record_audit_event('update', resource_type, resource_id,
-                       agent_id=request.headers.get('X-Agent-Id'))
+                       agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id)
 
-    response = jsonify(resource.to_fhir_json())
+    fhir_json = resource.to_fhir_json()
+    fhir_json = add_disclaimer(fhir_json, resource_type)
+    response = jsonify(fhir_json)
     response.headers['ETag'] = f'W/"{resource.version_id}"'
     return response
 
@@ -328,43 +380,65 @@ def search_resources(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
-    # Always enforce tenant isolation (mandatory since before_request ensures it exists)
+    # Always enforce tenant isolation
     tenant_id = request.headers.get('X-Tenant-Id')
     query = R6Resource.query.filter_by(
         resource_type=resource_type, is_deleted=False, tenant_id=tenant_id
     )
 
-    # Basic search: patient reference with sanitized input
+    # FHIR search: patient reference with validated format
     patient_ref = request.args.get('patient')
     if patient_ref:
-        sanitized = patient_ref.replace('%', '').replace('_', '')
-        if sanitized:
-            query = query.filter(R6Resource.resource_json.contains(sanitized))
+        if not _PATIENT_REF_PATTERN.match(patient_ref):
+            return _operation_outcome('error', 'invalid',
+                                      'Patient reference must match Patient/{id}'), 400
+        # Use structured JSON field matching for subject.reference
+        query = query.filter(
+            db.or_(
+                R6Resource.resource_json.contains(f'"reference":"{patient_ref}"'),
+                R6Resource.resource_json.contains(f'"reference": "{patient_ref}"'),
+            )
+        )
 
     context_id = request.args.get('context-id')
+
+    # Support _summary=count
+    summary = request.args.get('_summary')
+    if summary == 'count':
+        total = query.count()
+        bundle = {
+            'resourceType': 'Bundle',
+            'type': 'searchset',
+            'total': total,
+        }
+        return jsonify(bundle)
 
     # Clamp _count to [1, 200]
     count = request.args.get('_count', 50, type=int)
     count = max(1, min(count, 200))
     resources = query.limit(count).all()
 
-    # Apply redaction on all search results
+    # Apply redaction and disclaimer on all search results
+    entries = []
+    for r in resources:
+        fhir_json = apply_redaction(r.to_fhir_json())
+        fhir_json = add_disclaimer(fhir_json, resource_type)
+        entries.append({
+            'fullUrl': f'{request.host_url.rstrip("/")}/r6/fhir/{resource_type}/{r.id}',
+            'resource': fhir_json
+        })
+
     bundle = {
         'resourceType': 'Bundle',
         'type': 'searchset',
         'total': len(resources),
-        'entry': [
-            {
-                'fullUrl': f'{request.host_url.rstrip("/")}/r6/fhir/{resource_type}/{r.id}',
-                'resource': apply_redaction(r.to_fhir_json())
-            }
-            for r in resources
-        ]
+        'entry': entries
     }
 
     record_audit_event('read', resource_type, None,
                        agent_id=request.headers.get('X-Agent-Id'),
                        context_id=context_id,
+                       tenant_id=tenant_id,
                        detail=f'search with {len(resources)} results')
 
     return jsonify(bundle)
@@ -391,8 +465,10 @@ def validate_resource(resource_type):
 
     result = validator.validate_resource(body, mode=mode, profile=profile)
 
+    tenant_id = request.headers.get('X-Tenant-Id')
     record_audit_event('validate', resource_type, body.get('id'),
                        agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
                        detail=f'mode={mode}, valid={result["valid"]}')
 
     status_code = 200 if result['valid'] else 422
@@ -411,6 +487,12 @@ def ingest_context():
         return _operation_outcome('error', 'invalid',
                                   'Request body must be a FHIR Bundle'), 400
 
+    # Validate Bundle.type
+    bundle_type = body.get('type')
+    if bundle_type and bundle_type not in _VALID_BUNDLE_TYPES:
+        return _operation_outcome('error', 'invalid',
+                                  f'Bundle.type "{bundle_type}" is not a valid FHIR Bundle type'), 400
+
     tenant_id = request.headers.get('X-Tenant-Id')
 
     try:
@@ -418,6 +500,7 @@ def ingest_context():
         record_audit_event('create', 'Bundle', None,
                            agent_id=request.headers.get('X-Agent-Id'),
                            context_id=result['context_id'],
+                           tenant_id=tenant_id,
                            detail=f'ingested {result["resource_count"]} resources')
         return jsonify(result), 201
     except ValueError as e:
@@ -432,7 +515,10 @@ def ingest_context():
 @r6_blueprint.route('/context/<context_id>', methods=['GET'])
 def get_context(context_id):
     """Retrieve a context envelope by ID."""
-    envelope = ContextEnvelope.query.filter_by(context_id=context_id).first()
+    tenant_id = request.headers.get('X-Tenant-Id')
+    envelope = ContextEnvelope.query.filter_by(
+        context_id=context_id, tenant_id=tenant_id
+    ).first()
     if not envelope:
         return _operation_outcome('error', 'not-found',
                                   f'Context {context_id} not found'), 404
@@ -448,7 +534,8 @@ def get_context(context_id):
 
     record_audit_event('read', 'ContextEnvelope', context_id,
                        agent_id=request.headers.get('X-Agent-Id'),
-                       context_id=context_id)
+                       context_id=context_id,
+                       tenant_id=tenant_id)
 
     return jsonify(envelope.to_dict())
 
@@ -458,12 +545,16 @@ def get_context(context_id):
 @r6_blueprint.route('/AuditEvent', methods=['GET'])
 def search_audit_events():
     """Search AuditEvent records, optionally filtered by context-id."""
+    tenant_id = request.headers.get('X-Tenant-Id')
     context_id = request.args.get('context-id')
     resource_type = request.args.get('entity-type')
     count = request.args.get('_count', 50, type=int)
     count = max(1, min(count, 200))
 
-    query = AuditEventRecord.query.order_by(AuditEventRecord.recorded.desc())
+    # Enforce tenant isolation on audit events
+    query = AuditEventRecord.query.filter_by(
+        tenant_id=tenant_id
+    ).order_by(AuditEventRecord.recorded.desc())
 
     if context_id:
         query = query.filter_by(context_id=context_id)
@@ -502,6 +593,7 @@ def import_stub():
 
     source_version = request.args.get('source-version', 'R4')
     entries = body.get('entry', [])
+    tenant_id = request.headers.get('X-Tenant-Id')
 
     result = {
         'resourceType': 'OperationOutcome',
@@ -536,6 +628,7 @@ def import_stub():
 
     record_audit_event('create', 'Bundle', None,
                        agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
                        detail=f'import-stub from {source_version}, {len(entries)} entries')
 
     return jsonify(result), 202
@@ -562,6 +655,7 @@ def deidentify_endpoint(resource_type, resource_id):
 
     record_audit_event('read', resource_type, resource_id,
                        agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
                        detail='de-identification export')
 
     fhir_json = resource.to_fhir_json()
@@ -582,16 +676,25 @@ def export_audit():
     context_id = request.args.get('context-id')
     count = request.args.get('_count', 1000, type=int)
     count = max(1, min(count, 10000))
+    tenant_id = request.headers.get('X-Tenant-Id')
 
-    query = AuditEventRecord.query.order_by(AuditEventRecord.recorded.desc())
+    # Enforce tenant isolation on audit export
+    query = AuditEventRecord.query.filter_by(
+        tenant_id=tenant_id
+    ).order_by(AuditEventRecord.recorded.desc())
 
     if context_id:
         query = query.filter_by(context_id=context_id)
+
+    resource_type_filter = request.args.get('entity-type')
+    if resource_type_filter:
+        query = query.filter_by(resource_type=resource_type_filter)
 
     records = query.limit(count).all()
 
     record_audit_event('read', 'AuditEvent', None,
                        agent_id=request.headers.get('X-Agent-Id'),
+                       tenant_id=tenant_id,
                        detail=f'audit export: {len(records)} records, format={fmt}')
 
     content = export_audit_trail(records, format=fmt)

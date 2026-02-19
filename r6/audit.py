@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def record_audit_event(event_type, resource_type=None, resource_id=None,
                        agent_id=None, context_id=None, outcome='success',
-                       detail=None):
+                       detail=None, tenant_id=None):
     """
     Record an audit event for a FHIR operation.
 
@@ -30,6 +30,7 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
         context_id: Context envelope ID if applicable
         outcome: Event outcome (success, failure)
         detail: Additional detail text
+        tenant_id: Tenant identifier for isolation
     """
     try:
         nested = db.session.begin_nested()
@@ -38,6 +39,7 @@ def record_audit_event(event_type, resource_type=None, resource_id=None,
             resource_type=resource_type,
             resource_id=resource_id,
             context_id=context_id,
+            tenant_id=tenant_id,
             agent_id=agent_id,
             outcome=outcome,
             detail=detail

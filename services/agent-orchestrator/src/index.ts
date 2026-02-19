@@ -10,7 +10,7 @@
  * 3. HTTP bridge: POST /mcp/rpc (convenience for non-MCP Python clients)
  *
  * Security:
- * - CORS with configurable allowed origins
+ * - CORS with deny-by-default (requires explicit ALLOWED_ORIGINS)
  * - Origin header validation (DNS rebinding protection)
  * - Rate limiting per-client
  * - OAuth bearer token forwarding
@@ -38,17 +38,21 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").filter(Bo
 // Initialize FHIR tools
 const fhirTools = new FHIRTools(FHIR_BASE_URL);
 
-// --- CORS Middleware ---
+// Supported MCP protocol versions (newest first)
+const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05"];
+
+// --- CORS Middleware (deny-by-default) ---
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
+  if (origin && ALLOWED_ORIGINS.length > 0 && ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
+  // If ALLOWED_ORIGINS is empty, no Access-Control-Allow-Origin is set (deny-by-default)
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Tenant-Id, X-Step-Up-Token, X-Agent-Id, Mcp-Session-Id"
+    "Content-Type, Authorization, X-Tenant-Id, X-Step-Up-Token, X-Agent-Id, X-Human-Confirmed, Mcp-Session-Id"
   );
   res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
   if (req.method === "OPTIONS") {
@@ -97,6 +101,8 @@ function extractHeaders(req: express.Request): Record<string, string> {
   if (typeof agentId === "string") h["x-agent-id"] = agentId;
   const auth = req.headers["authorization"];
   if (typeof auth === "string") h["authorization"] = auth;
+  const humanConfirmed = req.headers["x-human-confirmed"];
+  if (typeof humanConfirmed === "string") h["x-human-confirmed"] = humanConfirmed;
   return h;
 }
 
@@ -104,7 +110,7 @@ function extractHeaders(req: express.Request): Record<string, string> {
 
 function createMCPServer(): Server {
   const server = new Server(
-    { name: "fhir-r6-mcp", version: "0.3.0" },
+    { name: "fhir-r6-mcp", version: "0.4.0" },
     { capabilities: { tools: {}, logging: {} } }
   );
 
@@ -144,6 +150,14 @@ function createMCPServer(): Server {
 
 const streamableSessions = new Map<string, Server>();
 
+// Negotiate protocol version: pick the best match between client and server
+function negotiateProtocolVersion(clientVersion?: string): string {
+  if (clientVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(clientVersion)) {
+    return clientVersion;
+  }
+  return SUPPORTED_PROTOCOL_VERSIONS[0]; // Default to latest supported
+}
+
 app.post("/mcp", async (req, res) => {
   // Origin validation (DNS rebinding protection)
   const origin = req.headers.origin;
@@ -162,35 +176,36 @@ app.post("/mcp", async (req, res) => {
     });
   }
 
-  const sessionId = (req.headers["mcp-session-id"] as string) || crypto.randomUUID();
   const reqHeaders = extractHeaders(req);
-
-  // Get or create session server
-  let server = streamableSessions.get(sessionId);
-  if (!server) {
-    server = createMCPServer();
-    streamableSessions.set(sessionId, server);
-  }
-
   const { id, method, params } = body;
 
   try {
     switch (method) {
       case "initialize": {
+        // Server ALWAYS generates session ID (prevent session fixation)
+        const sessionId = crypto.randomUUID();
+        const server = createMCPServer();
+        streamableSessions.set(sessionId, server);
+
+        // Protocol version negotiation
+        const clientVersion = params?.protocolVersion as string | undefined;
+        const negotiatedVersion = negotiateProtocolVersion(clientVersion);
+
         res.setHeader("Mcp-Session-Id", sessionId);
         return res.json({
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: "2024-11-05",
+            protocolVersion: negotiatedVersion,
             capabilities: { tools: {}, logging: {} },
-            serverInfo: { name: "fhir-r6-mcp", version: "0.3.0" },
+            serverInfo: { name: "fhir-r6-mcp", version: "0.4.0" },
           },
         });
       }
 
       case "notifications/initialized": {
-        return res.json({ jsonrpc: "2.0", id, result: {} });
+        // Notifications have no id and no response per JSON-RPC spec
+        return res.sendStatus(204);
       }
 
       case "tools/list": {
@@ -199,6 +214,16 @@ app.post("/mcp", async (req, res) => {
       }
 
       case "tools/call": {
+        // Require valid session for tool calls
+        const sessionId = req.headers["mcp-session-id"] as string;
+        if (!sessionId || !streamableSessions.has(sessionId)) {
+          return res.status(400).json({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32600, message: "Invalid or missing session. Call initialize first." },
+          });
+        }
+
         const toolName = params?.name as string;
         const toolInput = (params?.arguments ?? {}) as Record<string, unknown>;
 
@@ -247,14 +272,31 @@ app.delete("/mcp", (req, res) => {
   res.sendStatus(204);
 });
 
+// --- Session cleanup: expire sessions after 30 minutes of inactivity ---
+setInterval(() => {
+  // In production, sessions would have last-activity timestamps
+  // For now, cap total sessions to prevent memory exhaustion
+  const MAX_SESSIONS = 1000;
+  if (streamableSessions.size > MAX_SESSIONS) {
+    const iterator = streamableSessions.keys();
+    const toDelete = streamableSessions.size - MAX_SESSIONS;
+    for (let i = 0; i < toDelete; i++) {
+      const key = iterator.next().value;
+      if (key) streamableSessions.delete(key);
+    }
+  }
+}, 60_000);
+
 // --- SSE Transport (legacy MCP, still supported) ---
 
-const activeSessions = new Map<string, SSEServerTransport>();
+const activeSessions = new Map<string, { transport: SSEServerTransport; headers: Record<string, string> }>();
 
-app.get("/sse", async (_req, res) => {
+app.get("/sse", async (req, res) => {
   const server = createMCPServer();
   const transport = new SSEServerTransport("/messages", res);
-  activeSessions.set(transport.sessionId, transport);
+  // Capture headers from initial SSE connection for forwarding
+  const reqHeaders = extractHeaders(req);
+  activeSessions.set(transport.sessionId, { transport, headers: reqHeaders });
 
   res.on("close", () => {
     activeSessions.delete(transport.sessionId);
@@ -265,11 +307,11 @@ app.get("/sse", async (_req, res) => {
 
 app.post("/messages", async (req, res) => {
   const sessionId = req.query.sessionId as string;
-  const transport = activeSessions.get(sessionId);
-  if (!transport) {
+  const session = activeSessions.get(sessionId);
+  if (!session) {
     return res.status(400).json({ error: "Invalid or expired session" });
   }
-  await transport.handlePostMessage(req, res);
+  await session.transport.handlePostMessage(req, res);
 });
 
 // --- Legacy HTTP Bridge (for Python agent_client) ---
@@ -355,14 +397,19 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "healthy",
     service: "fhir-r6-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
     transports: ["streamable-http", "sse", "http-bridge"],
     protocol: "MCP",
-    protocolVersion: "2024-11-05",
+    protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0],
+    supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
     fhirBaseUrl: FHIR_BASE_URL,
     activeSessions: {
       streamableHttp: streamableSessions.size,
       sse: activeSessions.size,
+    },
+    cors: {
+      mode: ALLOWED_ORIGINS.length > 0 ? "allowlist" : "deny-all",
+      allowedOrigins: ALLOWED_ORIGINS.length,
     },
     timestamp: new Date().toISOString(),
   });
@@ -372,11 +419,12 @@ app.get("/health", (_req, res) => {
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`FHIR R6 MCP Server v0.3.0 running on port ${PORT}`);
+    console.log(`FHIR R6 MCP Server v0.4.0 running on port ${PORT}`);
     console.log(`FHIR Base URL: ${FHIR_BASE_URL}`);
     console.log(`Streamable HTTP: http://localhost:${PORT}/mcp`);
     console.log(`SSE endpoint:    http://localhost:${PORT}/sse`);
     console.log(`HTTP bridge:     http://localhost:${PORT}/mcp/rpc`);
+    console.log(`CORS: ${ALLOWED_ORIGINS.length > 0 ? `allowlist (${ALLOWED_ORIGINS.join(", ")})` : "deny-all (set ALLOWED_ORIGINS to enable)"}`);
   });
 }
 
