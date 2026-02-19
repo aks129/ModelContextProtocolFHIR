@@ -59,6 +59,25 @@ python main.py
 # FHIR API: http://localhost:5000/r6/fhir/metadata
 ```
 
+## Vercel Deployment
+
+```bash
+# Install Vercel CLI
+npm i -g vercel
+
+# Login to Vercel
+vercel login
+
+# Deploy (creates new project)
+vercel --prod
+
+# Set environment variables (optional)
+vercel env add STEP_UP_SECRET
+vercel env add SESSION_SECRET
+```
+
+Vercel uses ephemeral SQLite in `/tmp` for the demo. For persistent data, set `SQLALCHEMY_DATABASE_URI` to a PostgreSQL connection string (e.g., Vercel Postgres, Neon, Supabase).
+
 ## Docker
 
 ```bash
@@ -108,6 +127,10 @@ cd services/agent-orchestrator && npm ci && npm test
 main.py                     Flask app entry point
 app.py                      Web UI routes (landing page, dashboard)
 models.py                   SQLAlchemy db instance
+api/
+  index.py                  Vercel serverless entry point
+vercel.json                 Vercel deployment config
+requirements.txt            Python deps for Vercel
 r6/
   routes.py                 R6 FHIR REST Blueprint
   models.py                 R6Resource, ContextEnvelope, AuditEventRecord

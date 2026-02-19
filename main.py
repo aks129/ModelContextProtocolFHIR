@@ -16,19 +16,26 @@ logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO),
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Create the Flask app
-app = Flask(__name__)
+# Create the Flask app with explicit paths for Vercel compatibility
+_root_dir = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__,
+            template_folder=os.path.join(_root_dir, 'templates'),
+            static_folder=os.path.join(_root_dir, 'static'))
 app.secret_key = os.environ.get("SESSION_SECRET") or "a-development-secret-key"
 
-# Configure database — require explicit URI in production
+# Configure database — require explicit URI in production (unless VERCEL)
 db_uri = os.environ.get("SQLALCHEMY_DATABASE_URI")
 if not db_uri:
-    if os.environ.get('FLASK_ENV') == 'production':
+    if os.environ.get('VERCEL'):
+        # Vercel serverless: use ephemeral SQLite in /tmp
+        db_uri = "sqlite:////tmp/mcp_server.db"
+    elif os.environ.get('FLASK_ENV') == 'production':
         raise RuntimeError(
             'SQLALCHEMY_DATABASE_URI environment variable is required in production. '
             'SQLite is not suitable for production use.'
         )
-    db_uri = "sqlite:///mcp_server.db"
+    else:
+        db_uri = "sqlite:///mcp_server.db"
 
 app.config["SQLALCHEMY_DATABASE_URI"] = db_uri
 logger.info("Database configured (URI not logged for security)")
@@ -42,12 +49,17 @@ if 'postgresql' in db_uri or 'postgres' in db_uri:
         "pool_pre_ping": True,
     }
 
-# Require STEP_UP_SECRET in production
+# Require STEP_UP_SECRET in production (auto-generate on Vercel for demo)
 if os.environ.get('FLASK_ENV') == 'production' and not os.environ.get('STEP_UP_SECRET'):
-    raise RuntimeError(
-        'STEP_UP_SECRET environment variable is required in production. '
-        'Generate a secure random secret: python -c "import secrets; print(secrets.token_hex(32))"'
-    )
+    if os.environ.get('VERCEL'):
+        import secrets
+        os.environ['STEP_UP_SECRET'] = secrets.token_hex(32)
+        logger.info("STEP_UP_SECRET auto-generated for Vercel demo deployment")
+    else:
+        raise RuntimeError(
+            'STEP_UP_SECRET environment variable is required in production. '
+            'Generate a secure random secret: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
 
 # Initialize database
 db.init_app(app)
