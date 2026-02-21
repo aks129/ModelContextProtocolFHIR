@@ -810,6 +810,107 @@ async function createDeviceAlert() {
   refreshAuditFeed();
 }
 
+// --------------- Agent Guardrail Demo Loop ---------------
+
+async function runDemoLoop() {
+  setLoading('btn-demo-loop', true);
+  const stepsEl = document.getElementById('demo-steps');
+  const detailEl = document.getElementById('demo-step-detail');
+  stepsEl.style.display = 'block';
+  detailEl.style.display = 'block';
+  detailEl.innerHTML = '';
+
+  // Reset all steps
+  document.querySelectorAll('.demo-step').forEach(s => {
+    s.className = 'demo-step';
+    s.querySelector('.demo-step-indicator').innerHTML = '';
+  });
+
+  // Scroll into view
+  document.getElementById('demo-loop-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    // Fire the backend orchestration
+    const res = await r6Fetch('/demo/agent-loop', { method: 'POST' });
+
+    if (res.status !== 200) {
+      detailEl.innerHTML = highlightJSON(res.body);
+      setLoading('btn-demo-loop', false);
+      return;
+    }
+
+    const data = res.body;
+    const steps = data.steps || [];
+
+    // Animate through each step with delays
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const stepEl = document.querySelector(`.demo-step[data-step="${step.step}"]`);
+      if (!stepEl) continue;
+
+      // Mark active
+      stepEl.className = 'demo-step active';
+      stepEl.querySelector('.demo-step-indicator').innerHTML = '<span class="r6-spinner" style="width:14px;height:14px;border-width:2px"></span>';
+
+      // Show step detail
+      const stepDetail = {
+        step: step.step,
+        title: step.title,
+        guardrail: step.guardrail,
+        action: step.action,
+        detail: step.detail,
+      };
+      detailEl.innerHTML = highlightJSON(stepDetail);
+
+      await sleep(800);
+
+      // Show full result
+      detailEl.innerHTML = highlightJSON(step);
+
+      // Mark completed with appropriate state
+      const stateClass = step.status === 'denied' ? 'denied'
+        : step.status === 'permitted' ? 'permitted'
+        : 'completed';
+      stepEl.className = `demo-step ${stateClass}`;
+
+      const icon = step.status === 'denied' ? '<i class="fas fa-times" style="font-size:0.7rem"></i>'
+        : step.status === 'permitted' ? '<i class="fas fa-check" style="font-size:0.7rem"></i>'
+        : step.status === 'awaiting_confirmation' ? '<i class="fas fa-hand-paper" style="font-size:0.7rem"></i>'
+        : '<i class="fas fa-check" style="font-size:0.7rem"></i>';
+      stepEl.querySelector('.demo-step-indicator').innerHTML = icon;
+
+      // Toast per step
+      const toastType = step.status === 'denied' ? 'error'
+        : step.status === 'permitted' || step.status === 'committed' ? 'success'
+        : 'info';
+      toast(`Step ${step.step}: ${step.title}`, toastType);
+
+      refreshAuditFeed();
+
+      if (i < steps.length - 1) await sleep(1200);
+    }
+
+    // Final summary
+    await sleep(600);
+    detailEl.innerHTML = highlightJSON({
+      demo_complete: true,
+      guardrails_demonstrated: data.guardrails_demonstrated,
+      total_steps: steps.length,
+      audit_events_generated: steps.length + ' operations recorded in immutable audit trail',
+      message: 'Every step — from read to write — passed through tenant isolation, validation, access control, step-up auth, and human-in-the-loop enforcement.',
+    });
+    toast('Guardrail demo complete — all 6 patterns demonstrated', 'success');
+
+  } catch (e) {
+    detailEl.innerHTML = highlightJSON({ error: e.message });
+    toast('Demo failed: ' + e.message, 'error');
+  }
+
+  setLoading('btn-demo-loop', false);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 // --------------- Walkthrough Mode ---------------
 
 const WALKTHROUGH_STEPS = [

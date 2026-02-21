@@ -267,6 +267,85 @@
 .tool-card .tool-name { font-weight: 600; font-size: 0.85rem; }
 .tool-card .tool-desc { color: var(--r6-text-muted); font-size: 0.78rem; margin-top: 0.2rem; }
 
+/* Demo loop step tracker */
+.demo-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.5rem;
+  margin-bottom: 0.25rem;
+  transition: all 0.3s ease;
+  opacity: 0.5;
+}
+.demo-step.active {
+  opacity: 1;
+  background: var(--r6-primary-soft);
+}
+.demo-step.completed {
+  opacity: 1;
+}
+.demo-step.denied {
+  opacity: 1;
+  background: var(--r6-danger-soft);
+}
+.demo-step.permitted {
+  opacity: 1;
+  background: var(--r6-success-soft);
+}
+.demo-step-indicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--r6-border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  transition: all 0.3s ease;
+  margin-top: 0.1rem;
+}
+.demo-step.active .demo-step-indicator {
+  border-color: var(--r6-primary);
+  background: var(--r6-primary);
+  color: white;
+  box-shadow: 0 0 12px var(--r6-glow);
+  animation: pulse 1.5s ease infinite;
+}
+.demo-step.completed .demo-step-indicator {
+  border-color: var(--r6-success);
+  background: var(--r6-success);
+  color: white;
+}
+.demo-step.denied .demo-step-indicator {
+  border-color: var(--r6-danger);
+  background: var(--r6-danger);
+  color: white;
+}
+.demo-step.permitted .demo-step-indicator {
+  border-color: var(--r6-success);
+  background: var(--r6-success);
+  color: white;
+}
+.demo-step-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--r6-text);
+}
+.demo-step-subtitle {
+  font-size: 0.75rem;
+  color: var(--r6-text-muted);
+}
+.demo-step.denied .demo-step-title { color: var(--r6-danger); }
+.demo-step.permitted .demo-step-title { color: var(--r6-success); }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 12px var(--r6-glow); }
+  50% { box-shadow: 0 0 24px var(--r6-glow); }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .deid-compare { grid-template-columns: 1fr; }

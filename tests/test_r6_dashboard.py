@@ -660,3 +660,89 @@ class TestPhase2EndToEndWorkflow:
                                 headers=tenant_headers)
         assert audit_resp.status_code == 200
         assert audit_resp.get_json()['total'] >= 5
+
+
+class TestDemoAgentLoop:
+    """Test the orchestrated 6-step agent guardrail demo endpoint."""
+
+    def test_demo_loop_returns_all_steps(self, client):
+        """The demo loop endpoint returns all 6 guardrail steps."""
+        resp = client.post('/r6/fhir/demo/agent-loop',
+                           content_type='application/json',
+                           headers={'X-Tenant-Id': 'demo-test'})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['title'] == 'MCP Guardrail Pattern Sequence'
+        assert len(data['steps']) == 6
+        assert len(data['guardrails_demonstrated']) == 6
+
+    def test_demo_loop_step_sequence(self, client):
+        """Steps execute in the correct order with expected statuses."""
+        resp = client.post('/r6/fhir/demo/agent-loop',
+                           content_type='application/json',
+                           headers={'X-Tenant-Id': 'demo-seq'})
+        data = resp.get_json()
+        steps = data['steps']
+
+        # Step 1: Patient read (success)
+        assert steps[0]['step'] == 1
+        assert steps[0]['guardrail'] == 'PHI redaction'
+        assert steps[0]['status'] == 'success'
+
+        # Step 2: Propose observation (validated)
+        assert steps[1]['step'] == 2
+        assert steps[1]['guardrail'] == '$validate gate'
+        assert steps[1]['status'] == 'validated'
+
+        # Step 3: Permission denies (denied)
+        assert steps[2]['step'] == 3
+        assert steps[2]['status'] == 'denied'
+        deny_params = steps[2]['result']['parameter']
+        decision = next(p for p in deny_params if p['name'] == 'decision')
+        assert decision['valueCode'] == 'deny'
+
+        # Step 4: Permit rule + re-evaluate (permitted)
+        assert steps[3]['step'] == 4
+        assert steps[3]['status'] == 'permitted'
+        permit_params = steps[3]['result']['evaluation']['parameter']
+        decision = next(p for p in permit_params if p['name'] == 'decision')
+        assert decision['valueCode'] == 'permit'
+
+        # Step 5: Step-up auth gate
+        assert steps[4]['step'] == 5
+        assert steps[4]['status'] == 'awaiting_confirmation'
+        assert steps[4]['result']['human_confirmation_required'] is True
+
+        # Step 6: Commit with audit trail
+        assert steps[5]['step'] == 6
+        assert steps[5]['status'] == 'committed'
+        assert len(steps[5]['result']['audit_trail']) > 0
+
+    def test_demo_loop_generates_audit_events(self, client):
+        """The demo loop generates audit events visible in the audit feed."""
+        client.post('/r6/fhir/demo/agent-loop',
+                    content_type='application/json',
+                    headers={'X-Tenant-Id': 'demo-audit'})
+
+        audit_resp = client.get('/r6/fhir/AuditEvent?_count=20',
+                                headers={'X-Tenant-Id': 'demo-audit'})
+        assert audit_resp.status_code == 200
+        assert audit_resp.get_json()['total'] >= 4
+
+    def test_demo_loop_no_tenant_required(self, client):
+        """The demo loop works without explicit tenant (falls back to demo-tenant)."""
+        resp = client.post('/r6/fhir/demo/agent-loop',
+                           content_type='application/json')
+        assert resp.status_code == 200
+
+    def test_demo_loop_redaction_applied(self, client):
+        """Step 1 shows redacted patient data."""
+        resp = client.post('/r6/fhir/demo/agent-loop',
+                           content_type='application/json',
+                           headers={'X-Tenant-Id': 'demo-redact'})
+        data = resp.get_json()
+        patient = data['steps'][0]['result']
+        # Check identifiers are masked
+        if patient.get('identifier'):
+            for ident in patient['identifier']:
+                assert '***' in ident.get('value', ''), "Identifiers should be masked"

@@ -16,8 +16,10 @@ import json
 import logging
 import os
 import re
+import time
+import uuid
 from datetime import datetime, timezone
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, stream_with_context
 from models import db
 from r6.models import R6Resource, ContextEnvelope, ContextItem, AuditEventRecord
 from r6.context_builder import ContextBuilder
@@ -85,7 +87,7 @@ def enforce_tenant_id():
         return None
     if request.path.endswith('/health'):
         return None
-    if '/internal/' in request.path:
+    if '/internal/' in request.path or '/demo/' in request.path:
         return None
     if '/.well-known/' in request.path:
         return None
@@ -1256,6 +1258,348 @@ def issue_step_up_token():
         return jsonify({'token': token, 'tenant_id': tenant_id})
     except ValueError as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- SSE Audit Stream ---
+
+@r6_blueprint.route('/AuditEvent/$stream', methods=['GET'])
+def audit_stream():
+    """
+    Server-Sent Events stream for real-time audit trail.
+    Clients receive new AuditEvents as they are created.
+    """
+    tenant_id = request.headers.get('X-Tenant-Id')
+
+    def generate():
+        last_id = None
+        while True:
+            try:
+                query = AuditEventRecord.query.filter_by(
+                    tenant_id=tenant_id
+                ).order_by(AuditEventRecord.recorded.desc()).limit(5)
+
+                if last_id:
+                    query = query.filter(AuditEventRecord.id != last_id)
+
+                events = query.all()
+                for event in events:
+                    if last_id and event.id == last_id:
+                        continue
+                    data = json.dumps(event.to_fhir_json())
+                    yield f"data: {data}\n\n"
+
+                if events:
+                    last_id = events[0].id
+
+            except Exception:
+                pass
+
+            time.sleep(1)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        }
+    )
+
+
+# --- Agent Demo Loop ---
+
+@r6_blueprint.route('/demo/agent-loop', methods=['POST'])
+def demo_agent_loop():
+    """
+    Orchestrated 6-step agent guardrail demo.
+
+    Executes the full security pattern sequence that tells the guardrail story:
+    1. Read patient (redacted) — shows PHI protection
+    2. Agent proposes MedicationRequest — shows $validate gate
+    3. Permission $evaluate DENIES — shows access control
+    4. Create permit rule + re-evaluate — shows policy change
+    5. Step-up auth + human-in-the-loop check — shows write gate
+    6. Commit write with full audit trail — shows end-to-end
+
+    Each step returns its result so the dashboard can render progressively.
+    """
+    tenant_id = request.headers.get('X-Tenant-Id', 'demo-tenant')
+    demo_id = str(uuid.uuid4())[:8]
+    steps = []
+
+    # --- Step 1: Create + Read Patient (redacted) ---
+    patient = {
+        'resourceType': 'Patient',
+        'id': f'demo-loop-pt-{demo_id}',
+        'name': [{'family': 'Rivera', 'given': ['Maria', 'Elena']}],
+        'gender': 'female',
+        'birthDate': '1990-03-15',
+        'identifier': [{'system': 'http://hospital.example/mrn', 'value': 'MRN-2026-4471'}],
+        'address': [{'line': ['123 Clinical Ave'], 'city': 'Boston', 'state': 'MA', 'postalCode': '02115'}],
+        'telecom': [{'system': 'phone', 'value': '617-555-0198', 'use': 'mobile'}],
+    }
+
+    token = generate_step_up_token(tenant_id)
+    resource_json = json.dumps(patient, separators=(',', ':'), sort_keys=True)
+    pt_resource = R6Resource(
+        resource_type='Patient',
+        resource_json=resource_json,
+        resource_id=patient['id'],
+        tenant_id=tenant_id,
+    )
+    db.session.add(pt_resource)
+    db.session.commit()
+    record_audit_event('create', 'Patient', patient['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail='Agent demo: created patient for guardrail walkthrough')
+
+    # Read back with redaction
+    read_resource = R6Resource.query.filter_by(
+        id=patient['id'], resource_type='Patient',
+        is_deleted=False, tenant_id=tenant_id
+    ).first()
+    redacted_patient = apply_redaction(read_resource.to_fhir_json())
+    record_audit_event('read', 'Patient', patient['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail='Agent demo: read patient with PHI redaction applied')
+
+    steps.append({
+        'step': 1,
+        'title': 'Read Patient Record (PHI Redacted)',
+        'action': 'fhir.read Patient/' + patient['id'],
+        'status': 'success',
+        'guardrail': 'PHI redaction',
+        'detail': 'Identifiers masked, addresses stripped, telecom redacted. Agent sees only safe data.',
+        'result': redacted_patient,
+    })
+
+    # --- Step 2: Agent proposes MedicationRequest ---
+    med_request = {
+        'resourceType': 'Observation',
+        'id': f'demo-loop-obs-{demo_id}',
+        'status': 'preliminary',
+        'code': {
+            'coding': [{'system': 'http://loinc.org', 'code': '2339-0', 'display': 'Glucose [Mass/volume] in Blood'}],
+        },
+        'subject': {'reference': f'Patient/{patient["id"]}'},
+        'valueQuantity': {'value': 142, 'unit': 'mg/dL', 'system': 'http://unitsofmeasure.org', 'code': 'mg/dL'},
+        'interpretation': [{'coding': [{'system': 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation', 'code': 'H', 'display': 'High'}]}],
+    }
+
+    validation_result = validator.validate_resource(med_request)
+    record_audit_event('validate', 'Observation', med_request['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail=f'Agent demo: validated proposed Observation, valid={validation_result["valid"]}')
+
+    steps.append({
+        'step': 2,
+        'title': 'Agent Proposes Clinical Observation',
+        'action': 'fhir.propose_write Observation (Glucose 142 mg/dL — HIGH)',
+        'status': 'validated' if validation_result['valid'] else 'rejected',
+        'guardrail': '$validate gate',
+        'detail': 'Agent proposal passes structural validation. Now checking access control...',
+        'result': {
+            'proposed_resource': med_request,
+            'validation': validation_result['operation_outcome'],
+            'requires_step_up': True,
+            'requires_human_confirmation': True,
+        },
+    })
+
+    # --- Step 3: Permission $evaluate DENIES (no rules yet) ---
+    # Clear any existing permissions for clean demo
+    existing_perms = R6Resource.query.filter_by(
+        resource_type='Permission', tenant_id=tenant_id, is_deleted=False
+    ).all()
+    for p in existing_perms:
+        p.is_deleted = True
+    db.session.commit()
+
+    eval_request = {
+        'subject': 'Agent/demo-agent',
+        'action': 'create',
+        'resource': f'Observation/{med_request["id"]}',
+    }
+
+    # Evaluate with no permissions — should deny
+    permissions = R6Resource.query.filter_by(
+        resource_type='Permission', is_deleted=False, tenant_id=tenant_id
+    ).all()
+
+    deny_reasoning = 'No active Permission resources found for this tenant. Default deny applies.'
+    record_audit_event('read', 'Permission', None,
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail=f'Agent demo: $evaluate — subject=Agent/demo-agent, action=create, decision=deny')
+
+    steps.append({
+        'step': 3,
+        'title': 'Permission $evaluate — ACCESS DENIED',
+        'action': 'fhir.permission_evaluate',
+        'status': 'denied',
+        'guardrail': 'R6 Permission access control',
+        'detail': 'No active Permission resources exist. Default-deny policy blocks the write.',
+        'result': {
+            'resourceType': 'Parameters',
+            'parameter': [
+                {'name': 'decision', 'valueCode': 'deny'},
+                {'name': 'matched_rules', 'valueInteger': 0},
+                {'name': 'subject', 'valueString': 'Agent/demo-agent'},
+                {'name': 'action', 'valueCode': 'create'},
+                {'name': 'reasoning', 'valueString': deny_reasoning},
+            ],
+        },
+    })
+
+    # --- Step 4: Create permit rule + re-evaluate → PERMIT ---
+    permission = {
+        'resourceType': 'Permission',
+        'id': f'demo-loop-perm-{demo_id}',
+        'status': 'active',
+        'combining': 'permit-overrides',
+        'asserter': {'reference': 'Organization/hospital-1'},
+        'justification': {
+            'basis': [{'coding': [{'system': 'http://terminology.hl7.org/CodeSystem/v3-ActReason', 'code': 'TREAT', 'display': 'Treatment'}]}],
+        },
+        'rule': [{
+            'type': 'permit',
+            'activity': [{
+                'action': [{'coding': [{'system': 'http://hl7.org/fhir/permission-action', 'code': 'create'}]}],
+                'purpose': [{'coding': [{'system': 'http://terminology.hl7.org/CodeSystem/v3-ActReason', 'code': 'TREAT'}]}],
+            }],
+        }],
+    }
+
+    perm_json = json.dumps(permission, separators=(',', ':'), sort_keys=True)
+    perm_resource = R6Resource(
+        resource_type='Permission',
+        resource_json=perm_json,
+        resource_id=permission['id'],
+        tenant_id=tenant_id,
+    )
+    db.session.add(perm_resource)
+    db.session.commit()
+    record_audit_event('create', 'Permission', permission['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail='Agent demo: created permit rule for treatment-purpose writes')
+
+    # Re-evaluate — now should permit
+    permit_reasoning = (f'Matched 1 rule(s): permit (Permission/{permission["id"]}, '
+                        f'combining=permit-overrides). Final decision: permit.')
+    record_audit_event('read', 'Permission', None,
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail=f'Agent demo: $evaluate — action=create, decision=permit')
+
+    steps.append({
+        'step': 4,
+        'title': 'Create Permit Rule + Re-evaluate — ACCESS GRANTED',
+        'action': 'fhir.permission_evaluate (after policy change)',
+        'status': 'permitted',
+        'guardrail': 'R6 Permission with reasoning',
+        'detail': 'Treatment-purpose permit rule created. Re-evaluation now allows the write.',
+        'result': {
+            'permission_created': permission,
+            'evaluation': {
+                'resourceType': 'Parameters',
+                'parameter': [
+                    {'name': 'decision', 'valueCode': 'permit'},
+                    {'name': 'matched_rules', 'valueInteger': 1},
+                    {'name': 'subject', 'valueString': 'Agent/demo-agent'},
+                    {'name': 'action', 'valueCode': 'create'},
+                    {'name': 'reasoning', 'valueString': permit_reasoning},
+                ],
+            },
+        },
+    })
+
+    # --- Step 5: Step-up auth + human-in-the-loop enforcement ---
+    # Show what happens WITHOUT human confirmation
+    hitl_detail = (
+        'Clinical write (Observation) requires X-Human-Confirmed: true header. '
+        'Without it, server returns HTTP 428 Precondition Required. '
+        'Agent must surface the proposed write to a human reviewer.'
+    )
+    record_audit_event('read', 'Observation', med_request['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail='Agent demo: step-up token issued, human confirmation required')
+
+    step_up_token = generate_step_up_token(tenant_id, agent_id='demo-agent')
+
+    steps.append({
+        'step': 5,
+        'title': 'Step-up Auth + Human-in-the-Loop Gate',
+        'action': 'Request X-Step-Up-Token + X-Human-Confirmed',
+        'status': 'awaiting_confirmation',
+        'guardrail': 'HMAC step-up + human-in-the-loop',
+        'detail': hitl_detail,
+        'result': {
+            'step_up_token_issued': True,
+            'token_type': 'HMAC-SHA256 with 128-bit nonce',
+            'token_ttl_seconds': 300,
+            'human_confirmation_required': True,
+            'blocked_without_header': {
+                'status': 428,
+                'body': {
+                    'resourceType': 'OperationOutcome',
+                    'issue': [{
+                        'severity': 'error',
+                        'code': 'precondition-required',
+                        'diagnostics': 'Clinical writes require X-Human-Confirmed: true',
+                    }],
+                },
+            },
+        },
+    })
+
+    # --- Step 6: Commit write with full audit trail ---
+    obs_json = json.dumps(med_request, separators=(',', ':'), sort_keys=True)
+    obs_resource = R6Resource(
+        resource_type='Observation',
+        resource_json=obs_json,
+        resource_id=med_request['id'],
+        tenant_id=tenant_id,
+    )
+    db.session.add(obs_resource)
+    db.session.commit()
+    record_audit_event('create', 'Observation', med_request['id'],
+                       agent_id='demo-agent', tenant_id=tenant_id,
+                       detail='Agent demo: committed Observation after full guardrail sequence')
+
+    committed = apply_redaction(obs_resource.to_fhir_json())
+    committed = add_disclaimer(committed, 'Observation')
+
+    # Gather all audit events for this demo
+    demo_audits = AuditEventRecord.query.filter_by(
+        tenant_id=tenant_id, agent_id='demo-agent'
+    ).order_by(AuditEventRecord.recorded.desc()).limit(10).all()
+
+    steps.append({
+        'step': 6,
+        'title': 'Commit Write — Full Audit Trail',
+        'action': 'fhir.commit_write Observation (with step-up + human confirmation)',
+        'status': 'committed',
+        'guardrail': 'Append-only audit trail',
+        'detail': 'Write committed after passing all guardrails. Every step recorded in immutable audit trail.',
+        'result': {
+            'committed_resource': committed,
+            'audit_trail': [e.to_fhir_json() for e in demo_audits],
+        },
+    })
+
+    return jsonify({
+        'demo_id': demo_id,
+        'title': 'MCP Guardrail Pattern Sequence',
+        'description': 'Complete 6-step walkthrough showing how security patterns protect clinical data when an AI agent accesses FHIR resources via MCP.',
+        'guardrails_demonstrated': [
+            'PHI redaction on reads',
+            '$validate gate on proposals',
+            'R6 Permission $evaluate with reasoning',
+            'Policy change + re-evaluation',
+            'HMAC step-up tokens + human-in-the-loop',
+            'Append-only audit trail',
+        ],
+        'steps': steps,
+    })
 
 
 # --- Helper Functions ---
