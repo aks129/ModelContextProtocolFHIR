@@ -12,6 +12,10 @@ services:
       - FHIR_VALIDATOR_URL=${FHIR_VALIDATOR_URL:-http://localhost:8080}
       - REDIS_URL=redis://redis:6379/0
       - STEP_UP_SECRET=${STEP_UP_SECRET:-dev-step-up-secret-change-in-production}
+      # Upstream FHIR server proxy (set to connect to real data)
+      # Examples: https://hapi.fhir.org/baseR4, https://r4.smarthealthit.org
+      - FHIR_UPSTREAM_URL=${FHIR_UPSTREAM_URL:-}
+      - FHIR_UPSTREAM_TIMEOUT=${FHIR_UPSTREAM_TIMEOUT:-15}
     depends_on:
       - redis
     volumes:

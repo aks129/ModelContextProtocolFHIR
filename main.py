@@ -97,6 +97,14 @@ from r6.routes import r6_blueprint
 app.register_blueprint(r6_blueprint)
 logger.info("R6 FHIR Blueprint registered at /r6/fhir")
 
+# Log upstream FHIR server configuration
+_upstream_url = os.environ.get('FHIR_UPSTREAM_URL', '').strip()
+if _upstream_url:
+    logger.info(f"Upstream FHIR proxy enabled: {_upstream_url}")
+    logger.info("Guardrails (redaction, audit, step-up, tenant isolation) apply to upstream data")
+else:
+    logger.info("Running in local mode (SQLite JSON blobs). Set FHIR_UPSTREAM_URL for upstream proxy.")
+
 # Structured request logging with correlation IDs
 request_logger = logging.getLogger('request')
 
