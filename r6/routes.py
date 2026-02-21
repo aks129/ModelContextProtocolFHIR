@@ -1,17 +1,15 @@
 """
 R6 FHIR REST Facade - Flask Blueprint.
 
-Provides an R6-only REST surface with:
-- /r6/fhir/metadata (CapabilityStatement)
-- /r6/fhir/{type} (POST create, GET search)
-- /r6/fhir/{type}/{id} (GET read, PUT update)
-- /r6/fhir/{type}/$validate (POST validate)
-- /r6/fhir/Bundle/$ingest-context (POST bundle ingestion)
-- /r6/fhir/AuditEvent (GET search by contextId)
-- /r6/fhir/$import-stub (POST cross-version import stub)
-- /r6/fhir/oauth/* (OAuth 2.1 + SMART-on-FHIR)
-- /r6/fhir/AuditEvent/$export (NDJSON audit trail export)
-- /r6/fhir/{type}/{id}/$deidentify (Safe Harbor de-identification)
+Reference implementation of MCP guardrail patterns for FHIR R6 agent access.
+NOT a production FHIR server — stores resources as JSON blobs with structural
+validation only. Designed to demonstrate security patterns (tenant isolation,
+step-up auth, audit, redaction, human-in-the-loop) that real FHIR+MCP
+integrations would need.
+
+Search supports: patient, code, status, _lastUpdated, _count, _sort, _summary.
+Validation: structural checks for required fields. Falls back when external
+validator unavailable. No StructureDefinition or terminology binding validation.
 """
 
 import json
@@ -21,7 +19,7 @@ import re
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, Response
 from models import db
-from r6.models import R6Resource, ContextEnvelope, AuditEventRecord
+from r6.models import R6Resource, ContextEnvelope, ContextItem, AuditEventRecord
 from r6.context_builder import ContextBuilder
 from r6.validator import R6Validator
 from r6.audit import record_audit_event
@@ -139,11 +137,12 @@ def r6_metadata():
         'fhirVersion': R6_FHIR_VERSION,
         'format': ['json'],
         'software': {
-            'name': 'MCP FHIR R6 Showcase',
-            'version': '0.6.0'
+            'name': 'MCP FHIR R6 Reference',
+            'version': '0.7.0'
         },
         'implementation': {
-            'description': 'R6-only Agent-First FHIR Server Showcase',
+            'description': 'Reference implementation: MCP guardrail patterns for FHIR R6 agent access. '
+                           'JSON blob storage with structural validation. Not a production server.',
             'url': request.host_url.rstrip('/') + '/r6/fhir'
         },
         'rest': [
@@ -184,12 +183,22 @@ def _resource_capability(resource_type):
         {'code': 'update'},
         {'code': 'search-type'},
     ]
+    search_params = [
+        {'name': '_count', 'type': 'number', 'documentation': 'Max results (1-200)'},
+        {'name': '_sort', 'type': 'string', 'documentation': '_lastUpdated or -_lastUpdated'},
+        {'name': '_lastUpdated', 'type': 'date', 'documentation': 'Filter by last updated (ge/le prefix)'},
+        {'name': '_summary', 'type': 'token', 'documentation': 'count'},
+        {'name': 'code', 'type': 'token', 'documentation': 'Filter by code.coding[].code (JSON string match)'},
+        {'name': 'status', 'type': 'token', 'documentation': 'Filter by status field'},
+        {'name': 'patient', 'type': 'reference', 'documentation': 'Filter by subject.reference (Patient/{id})'},
+    ]
     return {
         'type': resource_type,
         'interaction': interactions,
         'versioning': 'versioned',
         'readHistory': False,
-        'updateCreate': False
+        'updateCreate': False,
+        'searchParam': search_params,
     }
 
 
@@ -389,7 +398,19 @@ def update_resource(resource_type, resource_id):
 
 @r6_blueprint.route('/<resource_type>', methods=['GET'])
 def search_resources(resource_type):
-    """Search R6 FHIR resources with basic parameters."""
+    """
+    Search R6 FHIR resources.
+
+    Supported parameters:
+      - patient: Reference filter (Patient/{id}) — matches subject.reference
+      - code: Code filter — matches code.coding[].code in the JSON
+      - status: Status filter — matches the status field
+      - _lastUpdated: Date filter (ge/le prefix) on last_updated column
+      - _count: Max results (1-200, default 50)
+      - _sort: Sort by _lastUpdated or -_lastUpdated (desc)
+      - _summary: 'count' returns total only
+      - context-id: Filter to resources in a specific context envelope
+    """
     # Delegate AuditEvent searches to the dedicated handler
     if resource_type == 'AuditEvent':
         return search_audit_events()
@@ -404,13 +425,12 @@ def search_resources(resource_type):
         resource_type=resource_type, is_deleted=False, tenant_id=tenant_id
     )
 
-    # FHIR search: patient reference with validated format
+    # --- patient reference filter ---
     patient_ref = request.args.get('patient')
     if patient_ref:
         if not _PATIENT_REF_PATTERN.match(patient_ref):
             return _operation_outcome('error', 'invalid',
                                       'Patient reference must match Patient/{id}'), 400
-        # Use structured JSON field matching for subject.reference
         query = query.filter(
             db.or_(
                 R6Resource.resource_json.contains(f'"reference":"{patient_ref}"'),
@@ -418,7 +438,66 @@ def search_resources(resource_type):
             )
         )
 
+    # --- code filter (matches code.coding[].code in JSON) ---
+    code_param = request.args.get('code')
+    if code_param:
+        # Match "code":"<value>" inside the JSON — works for coding arrays
+        query = query.filter(
+            R6Resource.resource_json.contains(f'"code":"{code_param}"')
+        )
+
+    # --- status filter (matches "status":"<value>" in JSON) ---
+    status_param = request.args.get('status')
+    if status_param:
+        query = query.filter(
+            R6Resource.resource_json.contains(f'"status":"{status_param}"')
+        )
+
+    # --- _lastUpdated filter (ge/le prefix on DB column) ---
+    last_updated_param = request.args.get('_lastUpdated')
+    if last_updated_param:
+        try:
+            if last_updated_param.startswith('ge'):
+                dt = datetime.fromisoformat(last_updated_param[2:].replace('Z', '+00:00'))
+                query = query.filter(R6Resource.last_updated >= dt)
+            elif last_updated_param.startswith('le'):
+                dt = datetime.fromisoformat(last_updated_param[2:].replace('Z', '+00:00'))
+                query = query.filter(R6Resource.last_updated <= dt)
+            elif last_updated_param.startswith('gt'):
+                dt = datetime.fromisoformat(last_updated_param[2:].replace('Z', '+00:00'))
+                query = query.filter(R6Resource.last_updated > dt)
+            elif last_updated_param.startswith('lt'):
+                dt = datetime.fromisoformat(last_updated_param[2:].replace('Z', '+00:00'))
+                query = query.filter(R6Resource.last_updated < dt)
+            else:
+                # Exact match (to the second)
+                dt = datetime.fromisoformat(last_updated_param.replace('Z', '+00:00'))
+                query = query.filter(R6Resource.last_updated >= dt)
+        except (ValueError, TypeError):
+            return _operation_outcome('error', 'invalid',
+                                      '_lastUpdated must be a valid ISO datetime with optional ge/le/gt/lt prefix'), 400
+
+    # --- context-id filter (restrict to resources in a context envelope) ---
     context_id = request.args.get('context-id')
+    if context_id:
+        from r6.models import ContextItem
+        context_refs = [item.resource_ref for item in
+                        ContextItem.query.filter_by(context_id=context_id).all()]
+        # resource_ref is like "Patient/abc-123"
+        context_ids = [ref.split('/')[-1] for ref in context_refs
+                       if ref.startswith(f'{resource_type}/')]
+        if context_ids:
+            query = query.filter(R6Resource.id.in_(context_ids))
+        else:
+            # No matching resources in context — return empty
+            query = query.filter(db.literal(False))
+
+    # --- _sort ---
+    sort_param = request.args.get('_sort', '-_lastUpdated')
+    if sort_param == '_lastUpdated':
+        query = query.order_by(R6Resource.last_updated.asc())
+    else:
+        query = query.order_by(R6Resource.last_updated.desc())
 
     # Support _summary=count
     summary = request.args.get('_summary')
@@ -446,18 +525,37 @@ def search_resources(resource_type):
             'resource': fhir_json
         })
 
+    # Build self link with search params for transparency
+    search_params = []
+    for key in ('patient', 'code', 'status', '_lastUpdated', '_count', '_sort'):
+        val = request.args.get(key)
+        if val:
+            search_params.append(f'{key}={val}')
+    self_link = f'{request.host_url.rstrip("/")}/r6/fhir/{resource_type}'
+    if search_params:
+        self_link += '?' + '&'.join(search_params)
+
     bundle = {
         'resourceType': 'Bundle',
         'type': 'searchset',
         'total': len(resources),
+        'link': [{'relation': 'self', 'url': self_link}],
         'entry': entries
     }
+
+    detail_parts = [f'{len(resources)} results']
+    if patient_ref:
+        detail_parts.append(f'patient={patient_ref}')
+    if code_param:
+        detail_parts.append(f'code={code_param}')
+    if status_param:
+        detail_parts.append(f'status={status_param}')
 
     record_audit_event('read', resource_type, None,
                        agent_id=request.headers.get('X-Agent-Id'),
                        context_id=context_id,
                        tenant_id=tenant_id,
-                       detail=f'search with {len(resources)} results')
+                       detail=f'search: {", ".join(detail_parts)}')
 
     return jsonify(bundle)
 
@@ -532,7 +630,18 @@ def ingest_context():
 
 @r6_blueprint.route('/context/<context_id>', methods=['GET'])
 def get_context(context_id):
-    """Retrieve a context envelope by ID."""
+    """
+    Retrieve a context envelope by ID.
+
+    The context envelope includes:
+    - Metadata (patient ref, encounter ref, temporal window, expiry)
+    - List of resource references included in this context
+    - Redaction profile applied
+    - Consent decision (currently always 'permit')
+
+    If ?_include=resources is passed, the actual resource data is included
+    (redacted, filtered to context membership only).
+    """
     tenant_id = request.headers.get('X-Tenant-Id')
     envelope = ContextEnvelope.query.filter_by(
         context_id=context_id, tenant_id=tenant_id
@@ -550,12 +659,34 @@ def get_context(context_id):
         return _operation_outcome('error', 'expired',
                                   f'Context {context_id} has expired'), 410
 
+    result = envelope.to_dict()
+
+    # If _include=resources, fetch and include actual resource data (redacted)
+    include = request.args.get('_include')
+    if include == 'resources':
+        items = ContextItem.query.filter_by(context_id=context_id).all()
+        resources = []
+        for item in items:
+            parts = item.resource_ref.split('/', 1)
+            if len(parts) == 2:
+                r_type, r_id = parts
+                r = R6Resource.query.filter_by(
+                    id=r_id, resource_type=r_type, tenant_id=tenant_id, is_deleted=False
+                ).first()
+                if r:
+                    fhir_json = apply_redaction(r.to_fhir_json())
+                    fhir_json = add_disclaimer(fhir_json, r_type)
+                    resources.append(fhir_json)
+        result['resources'] = resources
+        result['_note'] = ('Resources are redacted per the context redaction profile. '
+                           'Only resources belonging to this context are included.')
+
     record_audit_event('read', 'ContextEnvelope', context_id,
                        agent_id=request.headers.get('X-Agent-Id'),
                        context_id=context_id,
                        tenant_id=tenant_id)
 
-    return jsonify(envelope.to_dict())
+    return jsonify(result)
 
 
 # --- AuditEvent Endpoints ---
@@ -652,15 +783,17 @@ def import_stub():
     return jsonify(result), 202
 
 
-# --- Phase 2: Observation $stats Operation (R6) ---
+# --- Observation $stats Operation (standard FHIR, available since R4) ---
 
 @r6_blueprint.route('/Observation/$stats', methods=['GET'])
 def observation_stats():
     """
     Observation $stats — compute statistics over stored Observations.
 
-    R6 defines $stats for computing mean, min, max, count over a code/patient scope.
-    Supported stat codes: count, min, max, mean.
+    Standard FHIR operation (available since R4, not R6-specific).
+    Computes count, min, max, mean over numeric valueQuantity values.
+    Limitations: only supports valueQuantity (not valueCodeableConcept,
+    valueString, etc.). No percentile or median. No component support.
     """
     tenant_id = request.headers.get('X-Tenant-Id')
     code = request.args.get('code')
@@ -739,15 +872,16 @@ def observation_stats():
     return jsonify(result)
 
 
-# --- Phase 2: Observation $lastn Operation (R6) ---
+# --- Observation $lastn Operation (standard FHIR, available since R4) ---
 
 @r6_blueprint.route('/Observation/$lastn', methods=['GET'])
 def observation_lastn():
     """
     Observation $lastn — get the last N observations per code.
 
-    Returns the most recent observations, optionally filtered by patient and code.
-    Default N=1 (return only the latest observation per code).
+    Standard FHIR operation (available since R4, not R6-specific).
+    Returns the most recent observations grouped by code, optionally
+    filtered by patient and code. Default N=1.
     """
     tenant_id = request.headers.get('X-Tenant-Id')
     code = request.args.get('code')
@@ -812,15 +946,15 @@ def observation_lastn():
     return jsonify(bundle)
 
 
-# --- Phase 2: SubscriptionTopic Discovery (R6) ---
+# --- SubscriptionTopic Discovery (R6 ballot) ---
 
 @r6_blueprint.route('/SubscriptionTopic/$list', methods=['GET'])
 def list_subscription_topics():
     """
     List available SubscriptionTopics for discovery.
 
-    R6 moves topic-based subscriptions toward Normative status.
-    Agents use this to discover what events they can subscribe to.
+    Introduced in R5, maturing in R6. Topics define subscribable events.
+    This endpoint supports discovery only — no notification dispatch.
     """
     tenant_id = request.headers.get('X-Tenant-Id')
 
@@ -852,7 +986,7 @@ def list_subscription_topics():
     return jsonify(bundle)
 
 
-# --- Phase 2: Permission $evaluate (R6 Access Control) ---
+# --- Permission $evaluate (R6 Access Control) ---
 
 @r6_blueprint.route('/Permission/$evaluate', methods=['POST'])
 def evaluate_permission():
@@ -923,6 +1057,19 @@ def evaluate_permission():
                 if rule_type == 'permit':
                     decision = 'permit'
 
+    # Build reasoning explanation for the decision
+    if not permissions:
+        reasoning = 'No active Permission resources found for this tenant. Default deny applies.'
+    elif not matched_rules:
+        reasoning = (f'Found {len(permissions)} Permission resource(s) but no rules matched '
+                     f'action "{action}". Default deny applies.')
+    else:
+        rule_descs = []
+        for mr in matched_rules:
+            rule_descs.append(f'{mr["rule_type"]} (Permission/{mr["permission_id"]}, combining={mr["combining"]})')
+        reasoning = (f'Matched {len(matched_rules)} rule(s): {"; ".join(rule_descs)}. '
+                     f'Final decision: {decision}.')
+
     result = {
         'resourceType': 'Parameters',
         'parameter': [
@@ -930,6 +1077,7 @@ def evaluate_permission():
             {'name': 'matched_rules', 'valueInteger': len(matched_rules)},
             {'name': 'subject', 'valueString': subject_ref or 'unspecified'},
             {'name': 'action', 'valueCode': action},
+            {'name': 'reasoning', 'valueString': reasoning},
         ]
     }
 
@@ -1075,7 +1223,7 @@ def health_check():
     """
     health = {
         'status': 'healthy',
-        'version': '0.6.0',
+        'version': '0.7.0',
         'fhirVersion': R6_FHIR_VERSION,
         'checks': {}
     }

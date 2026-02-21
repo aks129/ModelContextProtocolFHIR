@@ -41,7 +41,7 @@ class TestR6Metadata:
         """CapabilityStatement.software.version must match pyproject.toml."""
         resp = client.get('/r6/fhir/metadata')
         data = resp.get_json()
-        assert data['software']['version'] == '0.6.0'
+        assert data['software']['version'] == '0.7.0'
 
 
 class TestTenantEnforcement:
@@ -880,7 +880,155 @@ class TestRateLimitHeaders:
         assert 'X-RateLimit-Remaining' in resp.headers
 
 
-# ===== Phase 2: R6-Specific Feature Tests =====
+# ===== Enhanced Search Tests =====
+
+
+class TestEnhancedSearch:
+    """Test new search parameters: code, status, _lastUpdated, _sort."""
+
+    def _seed_observations(self, client, auth_headers, data):
+        """Seed observations with various codes and statuses."""
+        headers = {**auth_headers, 'X-Human-Confirmed': 'true'}
+        for obs in data:
+            client.post('/r6/fhir/Observation',
+                       data=json.dumps(obs),
+                       content_type='application/json',
+                       headers=headers)
+
+    def test_search_by_code(self, client, auth_headers, tenant_headers):
+        """Search Observation by code parameter."""
+        self._seed_observations(client, auth_headers, [
+            {'resourceType': 'Observation', 'id': 'search-glucose',
+             'status': 'final', 'code': {'coding': [{'code': '2339-0'}]},
+             'valueQuantity': {'value': 100}},
+            {'resourceType': 'Observation', 'id': 'search-hr',
+             'status': 'final', 'code': {'coding': [{'code': '8867-4'}]},
+             'valueQuantity': {'value': 72}},
+        ])
+        resp = client.get('/r6/fhir/Observation?code=2339-0',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] >= 1
+        # All results should have the glucose code
+        for entry in data.get('entry', []):
+            resource_json = json.dumps(entry['resource'])
+            assert '2339-0' in resource_json
+
+    def test_search_by_status(self, client, auth_headers, tenant_headers):
+        """Search Permission by status parameter."""
+        client.post('/r6/fhir/Permission',
+                   data=json.dumps({
+                       'resourceType': 'Permission', 'id': 'search-perm-active',
+                       'status': 'active', 'combining': 'deny-overrides'
+                   }),
+                   content_type='application/json', headers=auth_headers)
+        client.post('/r6/fhir/Permission',
+                   data=json.dumps({
+                       'resourceType': 'Permission', 'id': 'search-perm-draft',
+                       'status': 'draft', 'combining': 'deny-overrides'
+                   }),
+                   content_type='application/json', headers=auth_headers)
+
+        resp = client.get('/r6/fhir/Permission?status=active',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] >= 1
+        for entry in data.get('entry', []):
+            assert '"status":"active"' in json.dumps(entry['resource']).replace(' ', '')
+
+    def test_search_combined_code_and_status(self, client, auth_headers, tenant_headers):
+        """Search with both code and status filters."""
+        headers = {**auth_headers, 'X-Human-Confirmed': 'true'}
+        client.post('/r6/fhir/Observation',
+                   data=json.dumps({
+                       'resourceType': 'Observation', 'id': 'combined-1',
+                       'status': 'final', 'code': {'coding': [{'code': '2339-0'}]}
+                   }),
+                   content_type='application/json', headers=headers)
+        client.post('/r6/fhir/Observation',
+                   data=json.dumps({
+                       'resourceType': 'Observation', 'id': 'combined-2',
+                       'status': 'preliminary', 'code': {'coding': [{'code': '2339-0'}]}
+                   }),
+                   content_type='application/json', headers=headers)
+
+        resp = client.get('/r6/fhir/Observation?code=2339-0&status=final',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] >= 1
+
+    def test_search_returns_self_link(self, client, tenant_headers):
+        """Search results should include a self link with applied params."""
+        resp = client.get('/r6/fhir/Patient?_count=5',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert 'link' in data
+        self_link = next(l for l in data['link'] if l['relation'] == 'self')
+        assert '_count=5' in self_link['url']
+
+    def test_search_invalid_lastUpdated(self, client, tenant_headers):
+        """Invalid _lastUpdated should return 400."""
+        resp = client.get('/r6/fhir/Patient?_lastUpdated=not-a-date',
+                         headers=tenant_headers)
+        assert resp.status_code == 400
+
+
+class TestPermissionReasoning:
+    """Test that Permission $evaluate returns reasoning."""
+
+    def test_evaluate_includes_reasoning(self, client, sample_permission, auth_headers, tenant_headers):
+        """$evaluate should include a reasoning parameter."""
+        client.post('/r6/fhir/Permission',
+                    data=json.dumps(sample_permission),
+                    content_type='application/json',
+                    headers=auth_headers)
+        resp = client.post('/r6/fhir/Permission/$evaluate',
+                          data=json.dumps({'subject': 'Practitioner/dr-1', 'action': 'read'}),
+                          content_type='application/json',
+                          headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        params = {p['name']: p for p in data['parameter']}
+        assert 'reasoning' in params
+        assert len(params['reasoning']['valueString']) > 0
+
+    def test_evaluate_deny_reasoning(self, client, tenant_headers):
+        """$evaluate with no permissions should explain default deny."""
+        resp = client.post('/r6/fhir/Permission/$evaluate',
+                          data=json.dumps({'subject': 'Practitioner/dr-1', 'action': 'read'}),
+                          content_type='application/json',
+                          headers=tenant_headers)
+        data = resp.get_json()
+        reasoning = next(p for p in data['parameter'] if p['name'] == 'reasoning')
+        assert 'No active Permission' in reasoning['valueString']
+
+
+class TestContextEnforcement:
+    """Test that context envelope can include resources."""
+
+    def test_context_with_include_resources(self, client, sample_bundle, tenant_headers):
+        """?_include=resources should return actual resource data."""
+        ingest_resp = client.post('/r6/fhir/Bundle/$ingest-context',
+                                  data=json.dumps(sample_bundle),
+                                  content_type='application/json',
+                                  headers=tenant_headers)
+        assert ingest_resp.status_code == 201
+        context_id = ingest_resp.get_json()['context_id']
+
+        resp = client.get(f'/r6/fhir/context/{context_id}?_include=resources',
+                         headers=tenant_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert 'resources' in data
+        assert len(data['resources']) >= 1
+        assert '_note' in data
+
+
+# ===== R6 Resource Tests =====
 
 
 class TestPhase2ResourceTypes:
@@ -1260,7 +1408,7 @@ class TestPhase2CapabilityStatement:
     def test_metadata_version_is_phase2(self, client):
         resp = client.get('/r6/fhir/metadata')
         data = resp.get_json()
-        assert data['software']['version'] == '0.6.0'
+        assert data['software']['version'] == '0.7.0'
 
 
 class TestPhase2DisclaimersOnNewResources:

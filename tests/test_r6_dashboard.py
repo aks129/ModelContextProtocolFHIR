@@ -38,7 +38,7 @@ class TestHealthEndpoint:
     def test_health_includes_version(self, client):
         resp = client.get('/r6/fhir/health')
         data = resp.get_json()
-        assert data['version'] == '0.6.0'
+        assert data['version'] == '0.7.0'
         assert '6.0.0' in data['fhirVersion']
 
     def test_health_no_tenant_required(self, client):
@@ -572,16 +572,10 @@ class TestPhase2DashboardPanels:
         assert 'r6resources-panel' in html
         assert 'phase2-header' in html
 
-    def test_dashboard_mentions_reviewers(self, client):
+    def test_dashboard_shows_honest_scope(self, client):
         resp = client.get('/r6-dashboard')
         html = resp.data.decode()
-        assert 'Josh Mandel' in html
-        assert 'Gino Canessa' in html
-
-    def test_dashboard_shows_phase2_in_subtitle(self, client):
-        resp = client.get('/r6-dashboard')
-        html = resp.data.decode()
-        assert 'Phase 2' in html
+        assert 'reference implementation' in html.lower() or 'ballot' in html.lower()
 
 
 class TestPhase2VersionUpdate:
@@ -590,7 +584,7 @@ class TestPhase2VersionUpdate:
     def test_health_shows_phase2_version(self, client):
         resp = client.get('/r6/fhir/health')
         data = resp.get_json()
-        assert data['version'] == '0.6.0'
+        assert data['version'] == '0.7.0'
 
 
 class TestPhase2EndToEndWorkflow:

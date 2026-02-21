@@ -12,7 +12,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
     <div>
       <h1><i class="fas fa-fire me-2" style="color:var(--r6-primary)"></i>R6 FHIR Agent Dashboard</h1>
-      <p class="lead mb-0">Interactive showcase of the R6-only, agent-first FHIR server with MCP tool orchestration — Phase 2</p>
+      <p class="lead mb-0">Reference implementation: MCP guardrail patterns for FHIR R6 agent access with security, audit, and compliance</p>
     </div>
     <div class="d-flex gap-2">
       <button class="r6-btn r6-btn-primary" onclick="startWalkthrough()">
@@ -222,20 +222,22 @@
       </div>
     </div>
 
-    <!-- Phase 2: R6 Capabilities Showcase -->
+    <!-- R6 Ballot Resources & Operations -->
     <div class="r6-panel" id="phase2-header" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 1px solid var(--r6-primary);">
       <div class="r6-panel-header" style="border-bottom-color: var(--r6-primary);">
-        <i class="fas fa-rocket" style="color: var(--r6-primary)"></i>
-        <h3 style="color: var(--r6-primary)">Phase 2 — R6-Specific Capabilities</h3>
-        <span class="r6-tag r6-tag-write">NEW</span>
+        <i class="fas fa-flask" style="color: var(--r6-primary)"></i>
+        <h3 style="color: var(--r6-primary)">R6 Ballot Resources &amp; Operations</h3>
+        <span class="r6-tag r6-tag-write">BALLOT</span>
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.5rem">
-          New R6 ballot features: Permission-based access control (separate from Consent), topic-based subscriptions,
-          Observation $stats/$lastn, NutritionIntake tracking, DeviceAlert monitoring, and 9 new resource types.
+          Resources new or restructured in R6 (v6.0.0-ballot3): <strong>Permission</strong> (access control, separate from Consent),
+          <strong>SubscriptionTopic</strong> (restructured pub/sub), <strong>NutritionIntake</strong>, <strong>DeviceAlert</strong>.
+          Operations <code>$stats</code> and <code>$lastn</code> are standard FHIR operations (available since R4) demonstrated here with stored data.
         </p>
         <p style="color:var(--r6-text-muted);font-size:0.78rem;margin-bottom:0">
-          <strong>QA & Review:</strong> Josh Mandel (SMART Health IT) &amp; Gino Canessa (FHIR Subscriptions WG) — assessment pending ballot reconciliation.
+          <strong>Scope:</strong> This is a reference implementation for exploring R6 ballot resources and MCP guardrail patterns &mdash; not a production FHIR server.
+          Validation is structural only (required fields + value constraints). Search supports code, status, patient, and _lastUpdated parameters.
         </p>
       </div>
     </div>
@@ -270,12 +272,13 @@
       <div class="r6-panel-header">
         <i class="fas fa-chart-bar"></i>
         <h3>Observation $stats &amp; $lastn</h3>
-        <span class="r6-tag r6-tag-read">R6 Operations</span>
+        <span class="r6-tag r6-tag-read">FHIR Std</span>
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
-          R6 Observation operations: <code>$stats</code> computes min/max/mean/count over stored values,
+          Standard FHIR operations (available since R4): <code>$stats</code> computes min/max/mean/count over stored numeric Observation values,
           <code>$lastn</code> returns the most recent observations per code. Both support patient + code filtering.
+          Implementation limited to <code>valueQuantity</code> (numeric observations only).
         </p>
         <div class="d-flex gap-2 flex-wrap mb-3">
           <button class="r6-btn r6-btn-success r6-btn-sm" id="btn-seed-obs" onclick="seedObservations()">
@@ -297,13 +300,13 @@
       <div class="r6-panel-header">
         <i class="fas fa-bell"></i>
         <h3>Topic-Based Subscriptions</h3>
-        <span class="r6-tag r6-tag-clinical">R6 Normative</span>
+        <span class="r6-tag r6-tag-clinical">R6 Ballot</span>
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:0.75rem">
-          R6 moves topic-based subscriptions toward <strong>Normative</strong> status. SubscriptionTopics define
-          triggerable events (resource changes, ADT events). Agents discover topics, then subscribe via channels
-          (REST-hook, WebSocket). Payload modes: full-resource, id-only, empty.
+          R6 restructures Subscription around <strong>SubscriptionTopic</strong> (introduced in R5, maturing in R6).
+          Topics define triggerable events. This demo stores topics and subscriptions but does <strong>not</strong> dispatch notifications &mdash;
+          it demonstrates the resource model and discovery pattern only.
         </p>
         <div class="d-flex gap-2 flex-wrap mb-3">
           <button class="r6-btn r6-btn-primary r6-btn-sm" id="btn-create-topic" onclick="createDemoTopic()">

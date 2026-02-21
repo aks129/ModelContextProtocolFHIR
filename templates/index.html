@@ -1,20 +1,26 @@
 {% extends "base.html" %}
 
-{% block title %}FHIR R6 MCP Showcase{% endblock %}
+{% block title %}FHIR R6 + MCP Guardrail Patterns{% endblock %}
 
 {% block content %}
 <div class="r6-hero" style="margin:-1.5rem -12px 2rem;padding:3rem 1.5rem;">
   <div class="text-center" style="position:relative;z-index:1">
     <h1 style="font-size:2.5rem;font-weight:800;margin-bottom:0.5rem">
       <i class="fas fa-fire" style="color:var(--r6-primary)"></i>
-      FHIR R6 Agent-First Showcase
+      FHIR R6 + MCP Guardrail Patterns
     </h1>
     <p class="lead" style="color:var(--r6-text-muted);max-width:700px;margin:0 auto 1.5rem">
-      A minimal, R6-only FHIR server with agent orchestration via Model Context Protocol.
-      Built for conference demos, marketplace evaluation, and prototype validation.
+      Reference implementation of security and compliance patterns for AI agent access to FHIR R6 data
+      via Model Context Protocol. Demonstrates tenant isolation, step-up auth, audit trails,
+      PHI redaction, and human-in-the-loop enforcement.
     </p>
+    <div style="color:var(--r6-text-muted);font-size:0.8rem;max-width:600px;margin:0 auto 1.5rem;padding:0.75rem;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:rgba(0,0,0,0.2)">
+      <strong>Scope:</strong> JSON blob storage with structural validation.
+      Search supports patient, code, status, _lastUpdated, _count, _sort.
+      Not a production FHIR server. No StructureDefinition validation, no terminology binding, no _include/_revinclude.
+    </div>
     <a href="{{ url_for('r6_dashboard') }}" class="r6-btn r6-btn-primary" style="font-size:1rem;padding:0.75rem 2rem">
-      <i class="fas fa-play"></i> Open R6 Dashboard
+      <i class="fas fa-play"></i> Open Interactive Dashboard
     </a>
   </div>
 </div>
@@ -23,15 +29,14 @@
   <div class="col-md-4">
     <div class="r6-panel" style="height:100%">
       <div class="r6-panel-header">
-        <i class="fas fa-robot"></i>
-        <h3>MCP Tool Loop</h3>
+        <i class="fas fa-shield-alt"></i>
+        <h3>Security Patterns</h3>
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem">
-          Six agent tools with read/write tiers:
-          <code>context.get</code>, <code>fhir.read</code>, <code>fhir.search</code>,
-          <code>fhir.validate</code>, <code>fhir.propose_write</code>, <code>fhir.commit_write</code>.
-          Write tools require HMAC step-up authorization.
+          <strong>What's real:</strong> Mandatory tenant isolation on every request, HMAC-SHA256 step-up tokens
+          for writes, ETag/If-Match concurrency control, OAuth 2.1 with PKCE (S256).
+          Append-only audit trail with database-level immutability enforcement.
         </p>
       </div>
     </div>
@@ -39,13 +44,16 @@
   <div class="col-md-4">
     <div class="r6-panel" style="height:100%">
       <div class="r6-panel-header">
-        <i class="fas fa-shield-alt"></i>
-        <h3>Security</h3>
+        <i class="fas fa-robot"></i>
+        <h3>MCP Tools (10)</h3>
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem">
-          OAuth 2.1 with PKCE, SMART-on-FHIR v2 discovery, mandatory tenant isolation,
-          PHI redaction on all reads, ETag concurrency control, and append-only audit trail.
+          Read tools: <code>context.get</code>, <code>fhir.read</code>, <code>fhir.search</code>,
+          <code>fhir.validate</code>, <code>fhir.stats</code>, <code>fhir.lastn</code>,
+          <code>fhir.permission_evaluate</code>, <code>fhir.subscription_topics</code>.
+          Write tools (step-up required): <code>propose_write</code>, <code>commit_write</code>.
+          Tools add reasoning summaries and clinical context to responses.
         </p>
       </div>
     </div>
@@ -58,8 +66,9 @@
       </div>
       <div class="r6-panel-body">
         <p style="color:var(--r6-text-muted);font-size:0.85rem">
-          Human-in-the-loop enforcement for clinical writes (HTTP 428),
-          medical disclaimer injection, HIPAA Safe Harbor de-identification (45 CFR 164.514(b)).
+          Human-in-the-loop enforcement for clinical writes (HTTP 428 without X-Human-Confirmed),
+          medical disclaimer injection on clinical reads,
+          HIPAA Safe Harbor de-identification (45 CFR 164.514(b)), PHI redaction on all read paths.
         </p>
       </div>
     </div>
@@ -76,11 +85,12 @@
       <div class="r6-panel-body" style="font-size:0.85rem;color:var(--r6-text-muted)">
         <table style="width:100%">
           <tr><td style="padding:0.3rem 0"><strong>Flask App</strong></td><td>R6 REST facade at <code>/r6/fhir/*</code></td></tr>
-          <tr><td style="padding:0.3rem 0"><strong>MCP Server</strong></td><td>Node.js orchestrator at port 3001</td></tr>
-          <tr><td style="padding:0.3rem 0"><strong>Database</strong></td><td>SQLite (dev) / PostgreSQL (prod)</td></tr>
-          <tr><td style="padding:0.3rem 0"><strong>Cache</strong></td><td>Redis for rate limiting</td></tr>
-          <tr><td style="padding:0.3rem 0"><strong>FHIR Version</strong></td><td>R6 v6.0.0-ballot3</td></tr>
-          <tr><td style="padding:0.3rem 0"><strong>Resources</strong></td><td>Patient, Encounter, Observation, Bundle, AuditEvent, Consent, OperationOutcome</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>MCP Server</strong></td><td>Node.js + TypeScript at port 3001</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Storage</strong></td><td>JSON blobs in SQLite (dev) — no indexed search fields</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Validation</strong></td><td>Structural only (required fields + value constraints)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>FHIR Version</strong></td><td>R6 v6.0.0-ballot3 (not yet published)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Search</strong></td><td>patient, code, status, _lastUpdated, _count, _sort</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>Resources</strong></td><td>16 types (7 base + 9 R6 ballot)</td></tr>
         </table>
       </div>
     </div>
@@ -88,28 +98,17 @@
   <div class="col-md-6">
     <div class="r6-panel">
       <div class="r6-panel-header">
-        <i class="fas fa-terminal"></i>
-        <h3>Quick Start</h3>
+        <i class="fas fa-flask"></i>
+        <h3>What's Actually R6-Specific</h3>
       </div>
-      <div class="r6-panel-body">
-        <div class="r6-json-output" style="max-height:200px;font-size:0.8rem">
-# Install and run
-uv sync
-python main.py
-
-# Or via Docker
-docker-compose up -d --build
-
-# Run tests (100 passing)
-python -m pytest tests/ -v
-
-# API endpoints
-GET  /r6/fhir/metadata
-GET  /r6/fhir/health
-POST /r6/fhir/{type}
-GET  /r6/fhir/{type}/{id}
-POST /r6/fhir/{type}/$validate
-POST /r6/fhir/Bundle/$ingest-context</div>
+      <div class="r6-panel-body" style="font-size:0.85rem;color:var(--r6-text-muted)">
+        <table style="width:100%">
+          <tr><td style="padding:0.3rem 0"><strong>Permission</strong></td><td>R6 access control (separate from Consent)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>SubscriptionTopic</strong></td><td>Restructured pub/sub (storage only, no dispatch)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>DeviceAlert</strong></td><td>ISO/IEEE 11073 device alarms (new in R6)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>NutritionIntake</strong></td><td>Dietary tracking (new in R6)</td></tr>
+          <tr><td style="padding:0.3rem 0"><strong>$stats/$lastn</strong></td><td>Standard FHIR ops (since R4, not R6-specific)</td></tr>
+        </table>
       </div>
     </div>
   </div>

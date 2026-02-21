@@ -147,11 +147,11 @@ const TOOL_DEFS = [
   { name: 'fhir.validate', desc: 'Validate a resource against R6', tier: 'read' },
   { name: 'fhir.propose_write', desc: 'Validate + preview a write (no commit)', tier: 'write' },
   { name: 'fhir.commit_write', desc: 'Commit a write (requires step-up)', tier: 'write' },
-  // Phase 2: R6-specific tools
-  { name: 'fhir.stats', desc: 'Observation $stats (min/max/mean)', tier: 'read', phase: 2 },
-  { name: 'fhir.lastn', desc: 'Observation $lastn (most recent)', tier: 'read', phase: 2 },
-  { name: 'fhir.permission_evaluate', desc: 'R6 Permission $evaluate', tier: 'read', phase: 2 },
-  { name: 'fhir.subscription_topics', desc: 'List SubscriptionTopics', tier: 'read', phase: 2 },
+  // Additional tools
+  { name: 'fhir.stats', desc: '$stats — numeric observation statistics (std FHIR)', tier: 'read', phase: 2 },
+  { name: 'fhir.lastn', desc: '$lastn — most recent observations (std FHIR)', tier: 'read', phase: 2 },
+  { name: 'fhir.permission_evaluate', desc: 'Permission $evaluate — R6 access control', tier: 'read', phase: 2 },
+  { name: 'fhir.subscription_topics', desc: 'SubscriptionTopic $list — R6 pub/sub discovery', tier: 'read', phase: 2 },
 ];
 
 function renderToolCards() {
@@ -175,7 +175,7 @@ function selectTool(name) {
   // Pre-fill example input
   const examples = {
     'fhir.read': { resource_type: 'Patient', resource_id: 'demo-pt-1' },
-    'fhir.search': { resource_type: 'Patient', _count: 5 },
+    'fhir.search': { resource_type: 'Observation', code: '2339-0', status: 'final', _count: 5 },
     'fhir.validate': { resource: { resourceType: 'Observation', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '2339-0' }] } } },
     'context.get': { context_id: '(ingest a bundle first)' },
     'fhir.propose_write': { resource: { resourceType: 'Observation', id: 'new-obs', status: 'preliminary', code: { coding: [{ system: 'http://loinc.org', code: '8867-4' }] } }, operation: 'create' },
@@ -210,7 +210,11 @@ async function executeSelectedTool() {
       case 'fhir.search': {
         const params = new URLSearchParams();
         if (input.patient) params.set('patient', input.patient);
+        if (input.code) params.set('code', input.code);
+        if (input.status) params.set('status', input.status);
+        if (input._lastUpdated) params.set('_lastUpdated', input._lastUpdated);
         if (input._count) params.set('_count', input._count);
+        if (input._sort) params.set('_sort', input._sort);
         if (input._summary) params.set('_summary', input._summary);
         res = await r6Fetch(`/${input.resource_type}?${params}`);
         break;
