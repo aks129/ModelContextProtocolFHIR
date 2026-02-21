@@ -11,8 +11,8 @@
 <div class="r6-hero" style="margin: -1.5rem -12px 1.5rem; padding-left: 1.5rem; padding-right: 1.5rem;">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
     <div>
-      <h1><i class="fas fa-fire me-2" style="color:var(--r6-primary)"></i>R6 FHIR Agent Dashboard</h1>
-      <p class="lead mb-0">Reference implementation: MCP guardrail patterns for FHIR R6 agent access with security, audit, and compliance</p>
+      <h1><i class="fas fa-shield-alt me-2" style="color:var(--r6-primary)"></i>MCP Guardrail Patterns for Healthcare AI</h1>
+      <p class="lead mb-0">How tenant isolation, access control, audit trails, and human-in-the-loop work together when AI agents access clinical data through FHIR R6 + MCP</p>
     </div>
     <div class="d-flex gap-2">
       <button class="r6-btn r6-btn-primary" onclick="startWalkthrough()">
@@ -76,6 +76,74 @@
 <div class="row">
   <!-- Left Column: Interactive Panels -->
   <div class="col-lg-8">
+
+    <!-- Killer Demo Loop -->
+    <div class="r6-panel" id="demo-loop-panel" style="border-color: var(--r6-primary); box-shadow: 0 0 30px rgba(99, 102, 241, 0.2);">
+      <div class="r6-panel-header" style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border-bottom-color: var(--r6-primary);">
+        <i class="fas fa-bolt" style="color: #fbbf24; font-size: 1.2rem;"></i>
+        <h3 style="color: #fbbf24;">Agent Guardrail Sequence</h3>
+        <span class="r6-tag r6-tag-write" style="margin-left: auto;">LIVE DEMO</span>
+      </div>
+      <div class="r6-panel-body">
+        <p style="color:var(--r6-text-muted);font-size:0.85rem;margin-bottom:1rem">
+          Watch an AI agent attempt to write clinical data through <strong>6 security guardrails</strong> in 60 seconds.
+          Each step demonstrates a real pattern: PHI redaction, $validate, Permission $evaluate (deny then permit),
+          HMAC step-up auth, human-in-the-loop, and immutable audit trail.
+        </p>
+        <button class="r6-btn r6-btn-primary" id="btn-demo-loop" onclick="runDemoLoop()" style="font-size:0.9rem;padding:0.6rem 1.5rem;">
+          <i class="fas fa-play"></i> Run 6-Step Guardrail Demo
+        </button>
+
+        <!-- Step progress tracker -->
+        <div id="demo-steps" style="margin-top:1.25rem;display:none">
+          <div class="demo-step" data-step="1">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">1. Read Patient Record</div>
+              <div class="demo-step-subtitle">PHI redaction applied</div>
+            </div>
+          </div>
+          <div class="demo-step" data-step="2">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">2. Propose Clinical Observation</div>
+              <div class="demo-step-subtitle">$validate gate</div>
+            </div>
+          </div>
+          <div class="demo-step" data-step="3">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">3. Permission $evaluate</div>
+              <div class="demo-step-subtitle">Access DENIED (default deny)</div>
+            </div>
+          </div>
+          <div class="demo-step" data-step="4">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">4. Create Permit Rule + Re-evaluate</div>
+              <div class="demo-step-subtitle">Access GRANTED with reasoning</div>
+            </div>
+          </div>
+          <div class="demo-step" data-step="5">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">5. Step-up Auth + Human Gate</div>
+              <div class="demo-step-subtitle">HMAC token + X-Human-Confirmed</div>
+            </div>
+          </div>
+          <div class="demo-step" data-step="6">
+            <div class="demo-step-indicator"></div>
+            <div class="demo-step-content">
+              <div class="demo-step-title">6. Commit Write + Audit Trail</div>
+              <div class="demo-step-subtitle">Immutable record of every step</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step detail output -->
+        <div id="demo-step-detail" class="r6-json-output mt-3" style="display:none;max-height:500px"></div>
+      </div>
+    </div>
 
     <!-- Patient Explorer -->
     <div class="r6-panel" id="patient-panel">

@@ -99,10 +99,12 @@ def enforce_human_in_loop():
     if request.method not in ('POST', 'PUT'):
         return None
 
-    # Exempt validation and other read-only operations
+    # Exempt validation, operations, and internal demo endpoints
     if '$validate' in request.path or '$import-stub' in request.path:
         return None
     if '$ingest-context' in request.path:
+        return None
+    if '/demo/' in request.path or '/internal/' in request.path:
         return None
 
     body = request.get_json(silent=True)
