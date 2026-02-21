@@ -24,6 +24,9 @@ def app():
     from models import db
     with flask_app.app_context():
         db.create_all()
+        # Reset rate limiter between tests to prevent 429 errors
+        from r6.rate_limit import _rate_limits
+        _rate_limits.clear()
         yield flask_app
         db.drop_all()
 
@@ -123,4 +126,99 @@ def sample_bundle(sample_patient, sample_observation):
             {'resource': sample_patient},
             {'resource': sample_observation}
         ]
+    }
+
+
+# --- Phase 2 Fixtures ---
+
+@pytest.fixture
+def sample_permission():
+    """Sample FHIR R6 Permission resource."""
+    return {
+        'resourceType': 'Permission',
+        'id': 'test-permission-1',
+        'status': 'active',
+        'combining': 'deny-overrides',
+        'asserter': {'reference': 'Organization/hospital-1'},
+        'rule': [
+            {
+                'type': 'permit',
+                'activity': [{
+                    'action': [{'coding': [{'code': 'read'}]}],
+                }]
+            },
+            {
+                'type': 'deny',
+                'activity': [{
+                    'action': [{'coding': [{'code': 'delete'}]}],
+                }]
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def sample_subscription_topic():
+    """Sample FHIR R6 SubscriptionTopic resource."""
+    return {
+        'resourceType': 'SubscriptionTopic',
+        'id': 'test-topic-1',
+        'url': 'http://example.org/fhir/SubscriptionTopic/encounter-admit',
+        'status': 'active',
+        'title': 'Encounter Admission Events',
+        'resourceTrigger': [{
+            'description': 'Encounter admission',
+            'resource': 'Encounter',
+            'supportedInteraction': ['create', 'update'],
+        }]
+    }
+
+
+@pytest.fixture
+def sample_subscription():
+    """Sample FHIR R6 Subscription resource."""
+    return {
+        'resourceType': 'Subscription',
+        'id': 'test-sub-1',
+        'status': 'requested',
+        'topic': 'http://example.org/fhir/SubscriptionTopic/encounter-admit',
+        'reason': 'Monitor admissions',
+        'channelType': {'code': 'rest-hook'},
+        'endpoint': 'https://agent.example.org/webhooks/admission',
+        'content': 'id-only',
+    }
+
+
+@pytest.fixture
+def sample_nutrition_intake():
+    """Sample FHIR R6 NutritionIntake resource."""
+    return {
+        'resourceType': 'NutritionIntake',
+        'id': 'test-nutrition-1',
+        'status': 'completed',
+        'subject': {'reference': 'Patient/test-patient-1'},
+        'consumedItem': [{
+            'type': {'coding': [{'system': 'http://snomed.info/sct', 'code': '226059008', 'display': 'Breakfast cereal'}]},
+            'nutritionProduct': {'concept': {'coding': [{'code': '226029003', 'display': 'Corn flakes'}]}},
+            'amount': {'value': 1, 'unit': 'serving'}
+        }],
+    }
+
+
+@pytest.fixture
+def sample_device_alert():
+    """Sample FHIR R6 DeviceAlert resource."""
+    return {
+        'resourceType': 'DeviceAlert',
+        'id': 'test-alert-1',
+        'status': 'active',
+        'condition': {
+            'coding': [{
+                'system': 'urn:iso:std:iso:11073:10101',
+                'code': 'MDC_EVT_HI_GT_LIM',
+                'display': 'High limit alarm'
+            }]
+        },
+        'device': {'reference': 'Device/pump-1'},
+        'subject': {'reference': 'Patient/test-patient-1'},
     }

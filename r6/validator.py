@@ -18,8 +18,14 @@ VALIDATOR_URL = os.environ.get('FHIR_VALIDATOR_URL', 'http://localhost:8080')
 
 # R6 supported resource types
 R6_RESOURCE_TYPES = [
+    # Phase 1 — Core
     'Patient', 'Encounter', 'Observation', 'Bundle',
-    'AuditEvent', 'Consent', 'OperationOutcome'
+    'AuditEvent', 'Consent', 'OperationOutcome',
+    # Phase 2 — R6-specific
+    'Permission', 'SubscriptionTopic', 'Subscription',
+    'NutritionIntake', 'NutritionProduct',
+    'DeviceAlert', 'DeviceAssociation',
+    'Requirements', 'ActorDefinition',
 ]
 
 # TTL for validator availability cache (seconds)
@@ -153,6 +159,16 @@ class R6Validator:
             issues.extend(self._validate_observation(resource))
         elif resource_type == 'Encounter':
             issues.extend(self._validate_encounter(resource))
+        elif resource_type == 'Permission':
+            issues.extend(self._validate_permission(resource))
+        elif resource_type == 'SubscriptionTopic':
+            issues.extend(self._validate_subscription_topic(resource))
+        elif resource_type == 'Subscription':
+            issues.extend(self._validate_subscription(resource))
+        elif resource_type == 'NutritionIntake':
+            issues.extend(self._validate_nutrition_intake(resource))
+        elif resource_type == 'DeviceAlert':
+            issues.extend(self._validate_device_alert(resource))
 
         has_errors = any(i['severity'] in ('error', 'fatal') for i in issues)
 
@@ -211,5 +227,110 @@ class R6Validator:
                 'code': 'required',
                 'diagnostics': 'Encounter.status is required',
                 'expression': ['Encounter.status']
+            })
+        return issues
+
+    # --- Phase 2: R6-specific resource validation ---
+
+    def _validate_permission(self, resource):
+        """Validate Permission resource (R6 access control)."""
+        issues = []
+        if not resource.get('status'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'Permission.status is required (active | entered-in-error | draft | rejected)',
+                'expression': ['Permission.status']
+            })
+        valid_statuses = {'active', 'entered-in-error', 'draft', 'rejected'}
+        if resource.get('status') and resource['status'] not in valid_statuses:
+            issues.append({
+                'severity': 'error',
+                'code': 'value',
+                'diagnostics': f'Permission.status must be one of: {", ".join(sorted(valid_statuses))}',
+                'expression': ['Permission.status']
+            })
+        if not resource.get('combining'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'Permission.combining is required (deny-overrides | permit-overrides | ordered-deny-overrides | ordered-permit-overrides | deny-unless-permit | permit-unless-deny)',
+                'expression': ['Permission.combining']
+            })
+        return issues
+
+    def _validate_subscription_topic(self, resource):
+        """Validate SubscriptionTopic resource (R6 event triggers)."""
+        issues = []
+        if not resource.get('status'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'SubscriptionTopic.status is required',
+                'expression': ['SubscriptionTopic.status']
+            })
+        if not resource.get('url'):
+            issues.append({
+                'severity': 'warning',
+                'code': 'business-rule',
+                'diagnostics': 'SubscriptionTopic.url is recommended for discoverability',
+                'expression': ['SubscriptionTopic.url']
+            })
+        return issues
+
+    def _validate_subscription(self, resource):
+        """Validate Subscription resource (R6 topic-based)."""
+        issues = []
+        if not resource.get('status'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'Subscription.status is required',
+                'expression': ['Subscription.status']
+            })
+        if not resource.get('topic'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'Subscription.topic is required (reference to SubscriptionTopic)',
+                'expression': ['Subscription.topic']
+            })
+        return issues
+
+    def _validate_nutrition_intake(self, resource):
+        """Validate NutritionIntake resource (R6 nutrition tracking)."""
+        issues = []
+        if not resource.get('status'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'NutritionIntake.status is required',
+                'expression': ['NutritionIntake.status']
+            })
+        if not resource.get('consumedItem'):
+            issues.append({
+                'severity': 'warning',
+                'code': 'business-rule',
+                'diagnostics': 'NutritionIntake.consumedItem is recommended',
+                'expression': ['NutritionIntake.consumedItem']
+            })
+        return issues
+
+    def _validate_device_alert(self, resource):
+        """Validate DeviceAlert resource (R6 medical device alerts)."""
+        issues = []
+        if not resource.get('status'):
+            issues.append({
+                'severity': 'error',
+                'code': 'required',
+                'diagnostics': 'DeviceAlert.status is required',
+                'expression': ['DeviceAlert.status']
+            })
+        if not resource.get('condition'):
+            issues.append({
+                'severity': 'warning',
+                'code': 'business-rule',
+                'diagnostics': 'DeviceAlert.condition is recommended for alert categorization',
+                'expression': ['DeviceAlert.condition']
             })
         return issues
