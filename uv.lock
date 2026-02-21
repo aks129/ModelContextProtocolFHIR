@@ -197,7 +197,7 @@ wheels = [
 
 [[package]]
 name = "fhir-mcp-r6-showcase"
-version = "0.5.0"
+version = "0.8.0"
 source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
@@ -205,6 +205,7 @@ dependencies = [
     { name = "flask" },
     { name = "flask-sqlalchemy" },
     { name = "gunicorn" },
+    { name = "httpx" },
     { name = "marshmallow" },
     { name = "psycopg2-binary" },
     { name = "requests" },
@@ -222,6 +223,7 @@ requires-dist = [
     { name = "flask", specifier = ">=3.1.0" },
     { name = "flask-sqlalchemy", specifier = ">=3.1.1" },
     { name = "gunicorn", specifier = ">=23.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "marshmallow", specifier = ">=3.26.1" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },

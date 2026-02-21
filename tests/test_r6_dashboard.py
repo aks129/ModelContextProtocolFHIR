@@ -38,7 +38,7 @@ class TestHealthEndpoint:
     def test_health_includes_version(self, client):
         resp = client.get('/r6/fhir/health')
         data = resp.get_json()
-        assert data['version'] == '0.7.0'
+        assert data['version'] == '0.8.0'
         assert '6.0.0' in data['fhirVersion']
 
     def test_health_no_tenant_required(self, client):
@@ -584,7 +584,7 @@ class TestPhase2VersionUpdate:
     def test_health_shows_phase2_version(self, client):
         resp = client.get('/r6/fhir/health')
         data = resp.get_json()
-        assert data['version'] == '0.7.0'
+        assert data['version'] == '0.8.0'
 
 
 class TestPhase2EndToEndWorkflow:

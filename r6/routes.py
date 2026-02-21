@@ -33,6 +33,7 @@ from r6.health_compliance import (
     add_disclaimer, enforce_human_in_loop, deidentify_resource,
     export_audit_trail, MEDICAL_DISCLAIMER
 )
+from r6.fhir_proxy import get_proxy, is_proxy_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +140,16 @@ def r6_metadata():
         'fhirVersion': R6_FHIR_VERSION,
         'format': ['json'],
         'software': {
-            'name': 'MCP FHIR R6 Reference',
-            'version': '0.7.0'
+            'name': 'MCP FHIR R6 Guardrails',
+            'version': '0.8.0'
         },
         'implementation': {
-            'description': 'Reference implementation: MCP guardrail patterns for FHIR R6 agent access. '
-                           'JSON blob storage with structural validation. Not a production server.',
+            'description': (
+                'MCP guardrail patterns for FHIR R6 agent access. '
+                + ('Proxying to upstream FHIR server with guardrail layer (redaction, audit, step-up auth).'
+                   if is_proxy_enabled()
+                   else 'Local JSON blob storage with structural validation. Not a production server.')
+            ),
             'url': request.host_url.rstrip('/') + '/r6/fhir'
         },
         'rest': [
@@ -249,6 +254,27 @@ def create_resource(resource_type):
         return _operation_outcome('error', 'invalid',
                                   'Resource id must match [A-Za-z0-9\\-.]{1,64}'), 400
 
+    # --- Upstream proxy mode: create on real FHIR server ---
+    proxy = get_proxy()
+    if proxy:
+        result, status_code = proxy.create(resource_type, body)
+        if result and status_code in (200, 201):
+            record_audit_event('create', resource_type, result.get('id'),
+                               agent_id=request.headers.get('X-Agent-Id'),
+                               tenant_id=tenant_id,
+                               detail='source=upstream')
+            result = add_disclaimer(result, resource_type)
+            result['_source'] = 'upstream'
+            response = jsonify(result)
+            response.status_code = status_code
+            return response
+        # Upstream rejected the create
+        if result:
+            return jsonify(result), status_code
+        return _operation_outcome('error', 'exception',
+                                  'Upstream FHIR server rejected the resource'), status_code
+
+    # --- Local mode: store in SQLite ---
     resource_json = json.dumps(body, separators=(',', ':'), sort_keys=True)
     resource = R6Resource(
         resource_type=resource_type,
@@ -286,8 +312,29 @@ def read_resource(resource_type, resource_id):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
-    # Enforce tenant isolation on reads
     tenant_id = request.headers.get('X-Tenant-Id')
+
+    # --- Upstream proxy mode: fetch from real FHIR server ---
+    proxy = get_proxy()
+    if proxy:
+        fhir_json = proxy.read(resource_type, resource_id)
+        if not fhir_json:
+            return _operation_outcome('error', 'not-found',
+                                      f'{resource_type}/{resource_id} not found'), 404
+
+        record_audit_event('read', resource_type, resource_id,
+                           agent_id=request.headers.get('X-Agent-Id'),
+                           context_id=request.headers.get('X-Context-Id'),
+                           tenant_id=tenant_id,
+                           detail='source=upstream')
+
+        # Guardrails still apply on upstream data
+        redacted = apply_redaction(fhir_json)
+        redacted = add_disclaimer(redacted, resource_type)
+        redacted['_source'] = 'upstream'
+        return jsonify(redacted)
+
+    # --- Local mode: query SQLite ---
     resource = R6Resource.query.filter_by(
         id=resource_id, resource_type=resource_type,
         is_deleted=False, tenant_id=tenant_id
@@ -376,6 +423,24 @@ def update_resource(resource_type, resource_id):
     if not validation_result['valid']:
         return jsonify(validation_result['operation_outcome']), 422
 
+    # --- Upstream proxy mode: update on real FHIR server ---
+    proxy = get_proxy()
+    if proxy:
+        result, status_code = proxy.update(resource_type, resource_id, body, if_match)
+        if result and status_code in (200, 201):
+            record_audit_event('update', resource_type, resource_id,
+                               agent_id=request.headers.get('X-Agent-Id'),
+                               tenant_id=tenant_id,
+                               detail='source=upstream')
+            result = add_disclaimer(result, resource_type)
+            result['_source'] = 'upstream'
+            return jsonify(result)
+        if result:
+            return jsonify(result), status_code
+        return _operation_outcome('error', 'exception',
+                                  'Upstream FHIR server rejected the update'), status_code
+
+    # --- Local mode ---
     resource_json = json.dumps(body, separators=(',', ':'), sort_keys=True)
     resource.update_resource(resource_json)
 
@@ -421,8 +486,46 @@ def search_resources(resource_type):
         return _operation_outcome('error', 'not-supported',
                                   f'Resource type {resource_type} is not supported'), 400
 
-    # Always enforce tenant isolation
     tenant_id = request.headers.get('X-Tenant-Id')
+
+    # --- Upstream proxy mode: forward search to real FHIR server ---
+    proxy = get_proxy()
+    if proxy:
+        # Forward all query params to upstream (patient, code, status, _count, etc.)
+        params = dict(request.args)
+        # Remove context-id (local concept, not upstream)
+        params.pop('context-id', None)
+        bundle = proxy.search(resource_type, params)
+
+        # Apply guardrails to each entry from upstream
+        entries = []
+        for entry in bundle.get('entry', []):
+            resource_data = entry.get('resource', {})
+            redacted = apply_redaction(resource_data)
+            redacted = add_disclaimer(redacted, resource_type)
+            redacted['_source'] = 'upstream'
+            entries.append({
+                'fullUrl': entry.get('fullUrl', ''),
+                'resource': redacted,
+            })
+
+        result = {
+            'resourceType': 'Bundle',
+            'type': 'searchset',
+            'total': bundle.get('total', len(entries)),
+            'link': bundle.get('link', []),
+            'entry': entries,
+            '_source': 'upstream',
+        }
+
+        record_audit_event('read', resource_type, None,
+                           agent_id=request.headers.get('X-Agent-Id'),
+                           tenant_id=tenant_id,
+                           detail=f'search (upstream): {len(entries)} results')
+
+        return jsonify(result)
+
+    # --- Local mode: query SQLite ---
     query = R6Resource.query.filter_by(
         resource_type=resource_type, is_deleted=False, tenant_id=tenant_id
     )
@@ -1225,8 +1328,9 @@ def health_check():
     """
     health = {
         'status': 'healthy',
-        'version': '0.7.0',
+        'version': '0.8.0',
         'fhirVersion': R6_FHIR_VERSION,
+        'mode': 'upstream' if is_proxy_enabled() else 'local',
         'checks': {}
     }
 
@@ -1238,6 +1342,16 @@ def health_check():
         health['status'] = 'degraded'
         health['checks']['database'] = 'error'
         logger.warning(f'Health check: database failed: {e}')
+
+    # Check upstream FHIR server connectivity
+    proxy = get_proxy()
+    if proxy:
+        upstream_health = proxy.healthy()
+        health['checks']['upstream'] = upstream_health
+        if upstream_health.get('status') != 'connected':
+            health['status'] = 'degraded'
+    else:
+        health['checks']['upstream'] = 'not_configured'
 
     status_code = 200 if health['status'] == 'healthy' else 503
     return jsonify(health), status_code

@@ -84,6 +84,25 @@ async function loadSystemHealth() {
       document.getElementById('stat-operations').textContent = ops.length;
       document.getElementById('stat-status').innerHTML = '<span style="color:var(--r6-success)">Online</span>';
     }
+    // Check upstream connection status via health endpoint
+    const healthRes = await fetch('/r6/fhir/health');
+    if (healthRes.ok) {
+      const health = await healthRes.json();
+      const modeEl = document.getElementById('stat-mode');
+      if (modeEl) {
+        if (health.mode === 'upstream') {
+          const upstream = health.checks?.upstream || {};
+          if (upstream.status === 'connected') {
+            modeEl.innerHTML = '<span style="color:var(--r6-success)">Upstream</span>';
+            modeEl.title = upstream.upstream_url + ' (' + (upstream.software || '') + ')';
+          } else {
+            modeEl.innerHTML = '<span style="color:var(--r6-danger)">Upstream (down)</span>';
+          }
+        } else {
+          modeEl.innerHTML = '<span style="color:var(--r6-info, #60a5fa)">Local</span>';
+        }
+      }
+    }
   } catch (e) {
     document.getElementById('stat-status').innerHTML = '<span style="color:var(--r6-danger)">Offline</span>';
   }
