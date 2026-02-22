@@ -196,7 +196,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fhir-mcp-r6-showcase"
+name = "fhir-mcp-guardrails"
 version = "0.8.0"
 source = { virtual = "." }
 dependencies = [

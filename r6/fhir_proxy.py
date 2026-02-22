@@ -48,7 +48,7 @@ class FHIRUpstreamProxy:
             follow_redirects=True,
             headers={
                 'Accept': 'application/fhir+json, application/json',
-                'User-Agent': 'MCP-FHIR-Guardrails/0.7.0',
+                'User-Agent': 'MCP-FHIR-Guardrails/0.9.0',
             },
         )
         self._upstream_host = urlparse(upstream_url).netloc

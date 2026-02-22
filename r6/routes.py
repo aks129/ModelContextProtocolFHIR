@@ -141,7 +141,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Guardrails',
-            'version': '0.8.0'
+            'version': '0.9.0'
         },
         'implementation': {
             'description': (
@@ -1311,7 +1311,7 @@ def privacy_policy():
             'fhir_version': 'R6 v6.0.0-ballot3',
         },
         'contact': {
-            'support': 'https://github.com/aks129/ModelContextProtocolFHIR/issues',
+            'support': 'https://github.com/aks129/fhir-mcp-guardrails/issues',
             'maintainer': 'FHIR IQ / Eugene Vestel',
             'website': 'https://www.fhiriq.com',
         },
@@ -1328,7 +1328,7 @@ def health_check():
     """
     health = {
         'status': 'healthy',
-        'version': '0.8.0',
+        'version': '0.9.0',
         'fhirVersion': R6_FHIR_VERSION,
         'mode': 'upstream' if is_proxy_enabled() else 'local',
         'checks': {}

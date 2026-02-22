@@ -1,13 +1,13 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
-  "name": "fhir-r6-mcp",
+  "name": "fhir-mcp-guardrails",
   "display_name": "FHIR R6 Agent Context Server",
   "description": "R6-only FHIR server with agent-first MCP orchestration. Provides bounded context envelopes, PHI redaction, step-up authorization, and SMART-on-FHIR scopes for clinical AI agents.",
-  "version": "0.5.0",
+  "version": "0.9.0",
   "protocol_version": "2024-11-05",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aks129/ModelContextProtocolFHIR"
+    "url": "https://github.com/aks129/fhir-mcp-guardrails"
   },
   "authors": [
     {
@@ -116,7 +116,7 @@
   "resources": [],
   "deployment": {
     "docker": {
-      "image": "ghcr.io/aks129/fhir-r6-mcp:latest",
+      "image": "ghcr.io/aks129/fhir-mcp-guardrails:latest",
       "compose_file": "docker-compose.yml"
     },
     "environment": {

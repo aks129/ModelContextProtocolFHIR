@@ -1,5 +1,5 @@
 services:
-  fhir-r6-showcase:
+  fhir-mcp-guardrails:
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +16,7 @@ services:
       # Examples: https://hapi.fhir.org/baseR4, https://r4.smarthealthit.org
       - FHIR_UPSTREAM_URL=${FHIR_UPSTREAM_URL:-}
       - FHIR_UPSTREAM_TIMEOUT=${FHIR_UPSTREAM_TIMEOUT:-15}
+      - FHIR_LOCAL_BASE_URL=http://localhost:5000/r6/fhir
     depends_on:
       - redis
     volumes:
@@ -37,11 +38,11 @@ services:
       - "3001:3001"
     environment:
       - MCP_PORT=3001
-      - FHIR_BASE_URL=http://fhir-r6-showcase:5000/r6/fhir
+      - FHIR_BASE_URL=http://fhir-mcp-guardrails:5000/r6/fhir
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-120}
     depends_on:
-      - fhir-r6-showcase
+      - fhir-mcp-guardrails
     networks:
       - fhir-net
 

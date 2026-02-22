@@ -14,7 +14,7 @@
 
 ## Docker
 - `docker-compose up -d --build` for full stack
-- Services: fhir-r6-showcase, redis, validator
+- Services: fhir-mcp-guardrails, redis, validator
 
 ## Testing
 - Python: pytest with fixtures in tests/conftest.py
