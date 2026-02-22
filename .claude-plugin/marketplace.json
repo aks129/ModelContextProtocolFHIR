@@ -1,0 +1,57 @@
+{
+  "name": "fhir-r6-guardrails",
+  "version": "0.9.0",
+  "owner": {
+    "name": "FHIR IQ / Eugene Vestel",
+    "email": "contact@fhiriq.com",
+    "url": "https://www.fhiriq.com"
+  },
+  "description": "FHIR R6 MCP guardrail patterns for AI agent access to clinical data. Runtime security layer with PHI redaction, step-up authorization, immutable audit trails, tenant isolation, and upstream FHIR server proxy. Complements the Anthropic healthcare marketplace's fhir-developer knowledge skill with a live MCP server and guardrail enforcement.",
+  "plugins": [
+    {
+      "name": "fhir-r6-guardrails",
+      "description": "FHIR R6 MCP server with 10 tools for agent-safe clinical data access. Enforces PHI redaction, step-up auth for writes, immutable audit trails, and tenant isolation on every request.",
+      "source": "./",
+      "category": "healthcare",
+      "tags": [
+        "fhir",
+        "fhir-r6",
+        "hl7",
+        "mcp",
+        "phi-redaction",
+        "hipaa",
+        "guardrails",
+        "clinical-ai",
+        "audit-trail",
+        "step-up-auth"
+      ]
+    },
+    {
+      "name": "fhir-upstream-proxy",
+      "description": "Connect to real FHIR servers (HAPI, SMART Health IT, Epic) while enforcing the full MCP guardrail stack. Redaction, audit, and URL rewriting applied to upstream responses.",
+      "source": "./",
+      "category": "healthcare",
+      "tags": [
+        "fhir",
+        "proxy",
+        "hapi",
+        "epic",
+        "smart-on-fhir",
+        "interoperability"
+      ]
+    },
+    {
+      "name": "phi-redaction",
+      "description": "PHI redaction patterns for FHIR resources. Names truncated to initials, identifiers masked, addresses stripped, birth dates truncated to year, photos removed. Applied automatically on all read paths.",
+      "source": "./",
+      "category": "healthcare",
+      "tags": [
+        "phi",
+        "redaction",
+        "hipaa",
+        "privacy",
+        "de-identification"
+      ]
+    }
+  ]
+}
