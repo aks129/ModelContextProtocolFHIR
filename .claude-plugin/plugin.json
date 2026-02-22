@@ -1,0 +1,82 @@
+{
+  "name": "fhir-r6-guardrails",
+  "version": "0.9.0",
+  "description": "FHIR R6 MCP guardrail patterns for AI agent access to clinical data. 10 MCP tools with PHI redaction, step-up authorization, audit trails, and upstream FHIR server proxy.",
+  "author": {
+    "name": "FHIR IQ / Eugene Vestel",
+    "email": "contact@fhiriq.com"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "fhir",
+    "fhir-r6",
+    "hl7",
+    "mcp",
+    "healthcare",
+    "phi-redaction",
+    "hipaa",
+    "guardrails",
+    "clinical-ai",
+    "audit-trail"
+  ],
+  "skills": {
+    "fhir-r6-guardrails": {
+      "path": "skills/fhir-r6-guardrails"
+    },
+    "phi-redaction": {
+      "path": "skills/phi-redaction"
+    },
+    "fhir-upstream-proxy": {
+      "path": "skills/fhir-upstream-proxy"
+    }
+  },
+  "mcp_servers": {
+    "fhir-mcp-guardrails": {
+      "type": "streamable-http",
+      "url": "http://localhost:3001/mcp",
+      "description": "FHIR R6 MCP server with guardrail enforcement. Requires the agent-orchestrator service running locally or via Docker Compose.",
+      "env": {
+        "FHIR_BASE_URL": {
+          "description": "Backend FHIR R6 REST facade URL",
+          "default": "http://localhost:5000/r6/fhir"
+        },
+        "MCP_PORT": {
+          "description": "Port for the MCP server",
+          "default": "3001"
+        },
+        "STEP_UP_SECRET": {
+          "description": "HMAC-SHA256 secret for step-up token signing. Required for write operations.",
+          "required": true
+        },
+        "FHIR_UPSTREAM_URL": {
+          "description": "Upstream FHIR server URL for proxy mode. Leave empty for local SQLite mode.",
+          "default": ""
+        },
+        "ALLOWED_ORIGINS": {
+          "description": "Comma-separated list of allowed CORS origins. Empty = deny all.",
+          "default": ""
+        }
+      },
+      "setup": {
+        "docker": "docker-compose up -d --build",
+        "manual": [
+          "uv sync",
+          "python main.py &",
+          "cd services/agent-orchestrator && npm ci && npm start"
+        ]
+      },
+      "tools": [
+        "context.get",
+        "fhir.read",
+        "fhir.search",
+        "fhir.validate",
+        "fhir.stats",
+        "fhir.lastn",
+        "fhir.permission_evaluate",
+        "fhir.subscription_topics",
+        "fhir.propose_write",
+        "fhir.commit_write"
+      ]
+    }
+  }
+}
