@@ -141,7 +141,7 @@ def r6_metadata():
         'format': ['json'],
         'software': {
             'name': 'MCP FHIR R6 Guardrails',
-            'version': '0.8.0'
+            'version': '0.9.0'
         },
         'implementation': {
             'description': (
@@ -1328,7 +1328,7 @@ def health_check():
     """
     health = {
         'status': 'healthy',
-        'version': '0.8.0',
+        'version': '0.9.0',
         'fhirVersion': R6_FHIR_VERSION,
         'mode': 'upstream' if is_proxy_enabled() else 'local',
         'checks': {}

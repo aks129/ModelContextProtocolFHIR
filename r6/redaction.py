@@ -4,9 +4,12 @@ FHIR Resource Redaction.
 Standard redaction profile for PHI protection applied consistently
 on all resource access paths (not just context ingestion).
 
+- Names: Keep family name, redact given names beyond first initial
 - Identifiers: Keep last 4 characters
 - Addresses: Remove line/text, keep city/state/country
 - Telecom: Replace values with [Redacted]
+- Birth dates: Truncate to year only
+- Photos: Remove entirely
 - Narratives: Replace with redacted div
 - Notes/comments: Replace with [Redacted]
 """
@@ -33,6 +36,24 @@ def apply_redaction(resource):
 
 def _redact_fields(resource):
     """Redact PHI fields from a single resource dict (in-place)."""
+    # Redact names (keep family, truncate given to first initial)
+    if 'name' in resource and isinstance(resource['name'], list):
+        for name_entry in resource['name']:
+            if isinstance(name_entry, dict):
+                if 'given' in name_entry and isinstance(name_entry['given'], list):
+                    name_entry['given'] = [
+                        g[0] + '.' if isinstance(g, str) and len(g) > 0 else g
+                        for g in name_entry['given']
+                    ]
+                name_entry.pop('text', None)
+
+    # Truncate birth date to year only
+    if 'birthDate' in resource and isinstance(resource['birthDate'], str):
+        resource['birthDate'] = resource['birthDate'][:4]
+
+    # Remove photos
+    resource.pop('photo', None)
+
     # Remove text narratives
     if 'text' in resource:
         resource['text'] = {

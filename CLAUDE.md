@@ -2,7 +2,7 @@
 
 ## Project Overview
 A **reference implementation** of security and compliance patterns for AI agent access to
-FHIR R6 data via Model Context Protocol (MCP). Version 0.8.0.
+FHIR R6 data via Model Context Protocol (MCP). Version 0.9.0.
 
 **What this is:** A pattern library showing how tenant isolation, step-up authorization,
 audit trails, PHI redaction, and human-in-the-loop enforcement work together when an
@@ -92,7 +92,7 @@ FHIR_UPSTREAM_URL=https://hapi.fhir.org/baseR4 docker-compose up -d --build
 cd services/agent-orchestrator && npm ci && npm test
 ```
 
-## Upstream FHIR Proxy (NEW in v0.8.0)
+## Upstream FHIR Proxy
 Connect to real FHIR servers while keeping the full guardrail stack active.
 
 ### Configuration
@@ -154,7 +154,7 @@ In **upstream proxy mode**: All query parameters forwarded to the upstream serve
 - **Tenant isolation** — Enforced at database layer on every query (local mode) or as a guardrail header (proxy mode)
 - **Step-up tokens** — HMAC-SHA256 with 128-bit nonce for write authorization
 - **OAuth 2.1 + PKCE** — S256 only, dynamic client registration, token revocation
-- **PHI redaction** — Applied on all read paths including upstream responses (identifiers masked, addresses stripped)
+- **PHI redaction** — Applied on all read paths including upstream responses (names truncated to initials, identifiers masked, addresses stripped, birth dates truncated to year, photos removed)
 - **Audit trail** — Append-only, database-level immutability enforcement. Logs upstream source when proxied.
 - **ETag/If-Match** — Concurrency control on updates
 - **Human-in-the-loop** — Clinical writes require X-Human-Confirmed header (enforcement is header-based, not cryptographic)
@@ -175,4 +175,4 @@ In **upstream proxy mode**: All query parameters forwarded to the upstream serve
 - Never commit secrets or API keys
 - Always emit AuditEvent for FHIR resource access
 - Step-up authorization required for all write operations
-- Run tests before committing: `python -m pytest tests/ -v`
+- Run tests before committing: `python -m pytest tests/ -v` and `cd services/agent-orchestrator && npm test`

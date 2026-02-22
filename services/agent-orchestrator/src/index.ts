@@ -110,7 +110,7 @@ function extractHeaders(req: express.Request): Record<string, string> {
 
 function createMCPServer(): Server {
   const server = new Server(
-    { name: "fhir-r6-mcp", version: "0.4.0" },
+    { name: "fhir-r6-mcp", version: "0.9.0" },
     { capabilities: { tools: {}, logging: {} } }
   );
 
@@ -198,7 +198,7 @@ app.post("/mcp", async (req, res) => {
           result: {
             protocolVersion: negotiatedVersion,
             capabilities: { tools: {}, logging: {} },
-            serverInfo: { name: "fhir-r6-mcp", version: "0.4.0" },
+            serverInfo: { name: "fhir-r6-mcp", version: "0.9.0" },
           },
         });
       }
@@ -397,7 +397,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "healthy",
     service: "fhir-r6-mcp",
-    version: "0.4.0",
+    version: "0.9.0",
     transports: ["streamable-http", "sse", "http-bridge"],
     protocol: "MCP",
     protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0],
@@ -419,7 +419,7 @@ app.get("/health", (_req, res) => {
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`FHIR R6 MCP Server v0.4.0 running on port ${PORT}`);
+    console.log(`FHIR R6 MCP Server v0.9.0 running on port ${PORT}`);
     console.log(`FHIR Base URL: ${FHIR_BASE_URL}`);
     console.log(`Streamable HTTP: http://localhost:${PORT}/mcp`);
     console.log(`SSE endpoint:    http://localhost:${PORT}/sse`);

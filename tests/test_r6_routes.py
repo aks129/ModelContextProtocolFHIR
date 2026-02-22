@@ -41,7 +41,7 @@ class TestR6Metadata:
         """CapabilityStatement.software.version must match pyproject.toml."""
         resp = client.get('/r6/fhir/metadata')
         data = resp.get_json()
-        assert data['software']['version'] == '0.8.0'
+        assert data['software']['version'] == '0.9.0'
 
 
 class TestTenantEnforcement:
@@ -156,6 +156,17 @@ class TestR6CRUD:
         # Address lines should be removed
         for addr in data.get('address', []):
             assert 'line' not in addr
+
+        # Names should be redacted (given names truncated to initial)
+        for name_entry in data.get('name', []):
+            for given in name_entry.get('given', []):
+                assert len(given) <= 2 and given.endswith('.'), \
+                    f'Given name not redacted to initial: {given}'
+
+        # Birth date should be truncated to year
+        if 'birthDate' in data:
+            assert len(data['birthDate']) == 4, \
+                f'BirthDate not truncated: {data["birthDate"]}'
 
     def test_read_nonexistent_returns_404(self, client, tenant_headers):
         resp = client.get('/r6/fhir/Patient/nonexistent',
@@ -1408,7 +1419,7 @@ class TestPhase2CapabilityStatement:
     def test_metadata_version_is_phase2(self, client):
         resp = client.get('/r6/fhir/metadata')
         data = resp.get_json()
-        assert data['software']['version'] == '0.8.0'
+        assert data['software']['version'] == '0.9.0'
 
 
 class TestPhase2DisclaimersOnNewResources:

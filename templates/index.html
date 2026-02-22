@@ -2,33 +2,402 @@
 
 {% block title %}MCP Guardrail Patterns for Healthcare AI{% endblock %}
 
+{% block head %}
+<style>
+/* ===== Hero Demo Styles ===== */
+.hero-demo-section {
+  margin: -1.5rem -12px 0;
+  padding: 3rem 1.5rem 2rem;
+  background: linear-gradient(135deg, var(--r6-surface) 0%, #1e1b4b 50%, #0f172a 100%);
+  border-bottom: 1px solid var(--r6-border);
+  position: relative;
+  overflow: hidden;
+}
+.hero-demo-section::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 30% 50%, var(--r6-primary-soft) 0%, transparent 60%);
+  pointer-events: none;
+}
+.hero-demo-section .hero-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.hero-title {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+.hero-oneliner {
+  color: var(--r6-text-muted);
+  font-size: 1.05rem;
+  max-width: 720px;
+  margin: 0 auto 1.75rem;
+  text-align: center;
+  line-height: 1.5;
+}
+.hero-ctas {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 2.5rem;
+}
+.hero-ctas .r6-btn { font-size: 0.95rem; padding: 0.7rem 1.75rem; }
+.hero-ctas .btn-github {
+  font-size: 0.82rem;
+  padding: 0.55rem 1.25rem;
+  color: var(--r6-text-muted);
+  border: 1px solid var(--r6-border);
+  border-radius: 0.5rem;
+  text-decoration: none;
+  transition: color 0.2s, border-color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.hero-ctas .btn-github:hover {
+  color: var(--r6-text);
+  border-color: var(--r6-text-muted);
+}
+
+/* Split-screen demo */
+.demo-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+@media (max-width: 768px) {
+  .demo-container { grid-template-columns: 1fr; }
+  .hero-title { font-size: 1.75rem; }
+  .hero-oneliner { font-size: 0.92rem; }
+}
+.demo-panel {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--r6-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  min-height: 280px;
+}
+.demo-panel-header {
+  padding: 0.65rem 1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--r6-border);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.demo-panel-left .demo-panel-header {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--r6-danger);
+}
+.demo-panel-right .demo-panel-header {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--r6-success);
+}
+.demo-panel-body {
+  padding: 1rem 1.15rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--r6-text);
+}
+.demo-field {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.demo-field.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.demo-field .field-label {
+  color: var(--r6-text-muted);
+  min-width: 75px;
+  display: inline-block;
+}
+.demo-field .field-value {
+  color: var(--r6-text);
+}
+
+/* Right panel: redacted highlight flash */
+.demo-field.flash .field-value {
+  animation: redactFlash 0.6s ease;
+}
+@keyframes redactFlash {
+  0% { background: rgba(16, 185, 129, 0.35); color: #fff; }
+  100% { background: transparent; color: var(--r6-text); }
+}
+
+/* Redacted text styling */
+.redacted {
+  color: var(--r6-success);
+}
+.redacted-tag {
+  color: var(--r6-warning);
+  font-style: italic;
+  font-size: 0.78rem;
+}
+
+/* Audit trail entry */
+.demo-audit {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--r6-border);
+  border-radius: 0.5rem;
+  padding: 0.7rem 1rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  color: var(--r6-text-muted);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.demo-audit.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.demo-audit .audit-check {
+  color: var(--r6-success);
+  font-weight: 700;
+}
+.demo-audit .audit-label {
+  color: var(--r6-info);
+}
+
+/* "Try it yourself" link */
+.demo-try-link {
+  text-align: center;
+  margin-top: 1rem;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.demo-try-link.visible { opacity: 1; }
+.demo-try-link a {
+  color: var(--r6-primary);
+  font-size: 0.85rem;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--r6-primary);
+  padding-bottom: 1px;
+}
+.demo-try-link a:hover {
+  color: #818cf8;
+  border-color: #818cf8;
+}
+
+/* Replay button */
+.demo-replay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--r6-text-muted);
+  background: none;
+  border: 1px solid var(--r6-border);
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+  margin-left: 0.75rem;
+}
+.demo-replay:hover {
+  color: var(--r6-text);
+  border-color: var(--r6-text-muted);
+}
+
+/* ===== Comparison Table ===== */
+.comparison-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  min-width: 600px;
+}
+.comparison-table th,
+.comparison-table td {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--r6-border);
+  text-align: center;
+  white-space: nowrap;
+}
+.comparison-table th {
+  background: var(--r6-surface-3);
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--r6-text-muted);
+}
+.comparison-table th:first-child,
+.comparison-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+}
+.comparison-table th.highlight-col {
+  color: var(--r6-primary);
+  background: rgba(99, 102, 241, 0.1);
+}
+.comparison-table td.highlight-col {
+  background: rgba(99, 102, 241, 0.05);
+}
+.comparison-table .check { color: var(--r6-success); font-weight: 700; }
+.comparison-table .cross { color: var(--r6-danger); }
+.comparison-table .partial { color: var(--r6-warning); font-size: 0.78rem; }
+.comparison-table .na { color: var(--r6-text-muted); }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="r6-hero" style="margin:-1.5rem -12px 2rem;padding:3rem 1.5rem;">
-  <div class="text-center" style="position:relative;z-index:1">
-    <h1 style="font-size:2.5rem;font-weight:800;margin-bottom:0.5rem">
+<!-- ===== HERO SECTION WITH AUTO-PLAYING DEMO ===== -->
+<div class="hero-demo-section" id="hero-demo">
+  <div class="hero-inner">
+    <h1 class="hero-title">
       <i class="fas fa-shield-alt" style="color:var(--r6-primary)"></i>
       MCP Guardrail Patterns for Healthcare AI
     </h1>
-    <p class="lead" style="color:var(--r6-text-muted);max-width:700px;margin:0 auto 1rem">
-      How tenant isolation, access control, audit trails, PHI redaction, and human-in-the-loop enforcement
-      work together when AI agents access clinical data through Model Context Protocol + FHIR R6.
+    <p class="hero-oneliner">
+      The security layer between AI agents and clinical data.<br>
+      PHI redaction, audit trails, step-up auth &mdash; one proxy for any FHIR server.
     </p>
-    <div style="max-width:700px;margin:0 auto 1.5rem;display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
-      <a href="{{ url_for('r6_dashboard') }}" class="r6-btn r6-btn-primary" style="font-size:1rem;padding:0.75rem 2rem">
-        <i class="fas fa-bolt"></i> Run the 60-Second Demo
+
+    <div class="hero-ctas">
+      <button class="r6-btn r6-btn-primary" onclick="replayDemo()" id="btn-watch-demo">
+        <i class="fas fa-play"></i> Watch the Demo
+      </button>
+      <a href="{{ url_for('r6_dashboard') }}" class="r6-btn r6-btn-outline">
+        <i class="fas fa-th-large"></i> Try the Dashboard
       </a>
-      <a href="{{ url_for('r6_dashboard') }}" class="r6-btn r6-btn-outline" style="font-size:1rem;padding:0.75rem 2rem">
-        <i class="fas fa-th-large"></i> Explore All Patterns
+      <a href="https://github.com/aks129/ModelContextProtocolFHIR" target="_blank" rel="noopener" class="btn-github">
+        <i class="fab fa-github"></i> View on GitHub
       </a>
     </div>
-    <div style="color:var(--r6-text-muted);font-size:0.8rem;max-width:600px;margin:0 auto;padding:0.75rem;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:rgba(0,0,0,0.2)">
-      <strong>What this is:</strong> A pattern library for developers building MCP + FHIR integrations.
-      The FHIR server is scaffolding; the guardrail architecture is the product.
+
+    <!-- Split-Screen Demo -->
+    <div class="demo-container" id="demo-split">
+      <!-- Left Panel: Raw Data -->
+      <div class="demo-panel demo-panel-left">
+        <div class="demo-panel-header">
+          <i class="fas fa-eye"></i>
+          What the AI Agent Requested
+        </div>
+        <div class="demo-panel-body" id="demo-left">
+          <div class="demo-field" data-idx="0"><span class="field-label">Patient:</span> <span class="field-value">Maria Elena Rivera</span></div>
+          <div class="demo-field" data-idx="1"><span class="field-label">MRN:</span> <span class="field-value">MRN-2026-4471</span></div>
+          <div class="demo-field" data-idx="2"><span class="field-label">Phone:</span> <span class="field-value">617-555-0198</span></div>
+          <div class="demo-field" data-idx="3"><span class="field-label">Address:</span> <span class="field-value">123 Clinical Ave, Boston, MA</span></div>
+          <div class="demo-field" data-idx="4"><span class="field-label">DOB:</span> <span class="field-value">1985-03-15</span></div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Redacted Data -->
+      <div class="demo-panel demo-panel-right">
+        <div class="demo-panel-header">
+          <i class="fas fa-shield-alt"></i>
+          What the AI Agent Received
+        </div>
+        <div class="demo-panel-body" id="demo-right">
+          <div class="demo-field" data-idx="0"><span class="field-label">Patient:</span> <span class="field-value"><span class="redacted">Rivera, M. E.</span></span></div>
+          <div class="demo-field" data-idx="1"><span class="field-label">MRN:</span> <span class="field-value"><span class="redacted">***4471</span></span></div>
+          <div class="demo-field" data-idx="2"><span class="field-label">Phone:</span> <span class="field-value"><span class="redacted-tag">[Redacted]</span></span></div>
+          <div class="demo-field" data-idx="3"><span class="field-label">Address:</span> <span class="field-value"><span class="redacted">Boston, MA</span></span></div>
+          <div class="demo-field" data-idx="4"><span class="field-label">DOB:</span> <span class="field-value"><span class="redacted">1985</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit Trail Entry -->
+    <div class="demo-audit" id="demo-audit">
+      <span class="audit-check">&#10003;</span>
+      <span class="audit-label">AuditEvent:</span>
+      READ Patient/aee09834 by Agent/demo-agent at <span id="demo-timestamp"></span> | Tenant: hospital-a
+      <button class="demo-replay" onclick="replayDemo()" title="Replay animation"><i class="fas fa-redo-alt"></i> Replay</button>
+    </div>
+
+    <!-- Try it yourself -->
+    <div class="demo-try-link" id="demo-try-link">
+      <a href="{{ url_for('r6_dashboard') }}">This is a demo &mdash; try it yourself on the live dashboard &rarr;</a>
     </div>
   </div>
 </div>
 
-<!-- The Story: 6-Step Guardrail Sequence -->
+<!-- ===== COMPARISON TABLE ===== -->
+<div class="r6-panel mb-5 mt-5">
+  <div class="r6-panel-header">
+    <i class="fas fa-balance-scale"></i>
+    <h3>How This Compares</h3>
+  </div>
+  <div class="r6-panel-body">
+    <div class="comparison-table-wrapper">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="highlight-col">This Project</th>
+            <th>AWS HealthLake MCP</th>
+            <th>Medplum MCP</th>
+            <th>Raw FHIR</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Works with any FHIR server</td>
+            <td class="highlight-col"><span class="check">&#10003;</span></td>
+            <td><span class="partial">HealthLake only</span></td>
+            <td><span class="partial">Medplum only</span></td>
+            <td><span class="na">&mdash;</span></td>
+          </tr>
+          <tr>
+            <td>PHI redaction on reads</td>
+            <td class="highlight-col"><span class="check">&#10003;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+          </tr>
+          <tr>
+            <td>Immutable audit trail</td>
+            <td class="highlight-col"><span class="check">&#10003;</span></td>
+            <td><span class="partial">CloudTrail</span></td>
+            <td><span class="partial">Partial</span></td>
+            <td><span class="cross">&#10007;</span></td>
+          </tr>
+          <tr>
+            <td>Step-up auth for writes</td>
+            <td class="highlight-col"><span class="check">&#10003;</span></td>
+            <td><span class="partial">IAM</span></td>
+            <td><span class="partial">Medplum auth</span></td>
+            <td><span class="cross">&#10007;</span></td>
+          </tr>
+          <tr>
+            <td>Human-in-the-loop</td>
+            <td class="highlight-col"><span class="check">&#10003;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+            <td><span class="cross">&#10007;</span></td>
+          </tr>
+          <tr>
+            <td>Setup time</td>
+            <td class="highlight-col"><strong style="color:var(--r6-success)">10 seconds</strong></td>
+            <td><span class="partial">30+ min</span></td>
+            <td><span class="partial">15+ min</span></td>
+            <td><span class="na">Varies</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== The Story: 6-Step Guardrail Sequence ===== -->
 <div class="r6-panel mb-5" style="border-color: var(--r6-primary); box-shadow: 0 0 30px rgba(99, 102, 241, 0.15);">
   <div class="r6-panel-header" style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border-bottom-color: var(--r6-primary);">
     <i class="fas fa-bolt" style="color: #fbbf24; font-size: 1.1rem;"></i>
@@ -206,4 +575,81 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  'use strict';
+
+  var demoRunning = false;
+
+  function runHeroDemo() {
+    if (demoRunning) return;
+    demoRunning = true;
+
+    var leftFields = document.querySelectorAll('#demo-left .demo-field');
+    var rightFields = document.querySelectorAll('#demo-right .demo-field');
+    var auditEl = document.getElementById('demo-audit');
+    var tryLink = document.getElementById('demo-try-link');
+    var timestampEl = document.getElementById('demo-timestamp');
+
+    // Reset all fields
+    leftFields.forEach(function(f) { f.classList.remove('visible'); });
+    rightFields.forEach(function(f) { f.classList.remove('visible', 'flash'); });
+    auditEl.classList.remove('visible');
+    tryLink.classList.remove('visible');
+
+    var fieldCount = leftFields.length;
+    var fieldDelay = 300;   // ms between each field appearing
+    var rightOffset = 150;  // ms delay before right side responds
+
+    // Animate each field pair
+    for (var i = 0; i < fieldCount; i++) {
+      (function(idx) {
+        // Left field appears (typewriter reveal)
+        setTimeout(function() {
+          leftFields[idx].classList.add('visible');
+        }, idx * fieldDelay);
+
+        // Right field appears with flash shortly after
+        setTimeout(function() {
+          rightFields[idx].classList.add('visible', 'flash');
+        }, idx * fieldDelay + rightOffset);
+      })(i);
+    }
+
+    // Audit trail appears after all fields
+    var auditTime = fieldCount * fieldDelay + rightOffset + 400;
+    setTimeout(function() {
+      // Set current timestamp
+      var now = new Date();
+      timestampEl.textContent = now.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+      auditEl.classList.add('visible');
+    }, auditTime);
+
+    // "Try it yourself" link appears last
+    setTimeout(function() {
+      tryLink.classList.add('visible');
+      demoRunning = false;
+    }, auditTime + 500);
+  }
+
+  // Replay function (global)
+  window.replayDemo = function() {
+    // Scroll to hero if not visible
+    var hero = document.getElementById('hero-demo');
+    if (hero) {
+      hero.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    // Small delay to let scroll settle, then replay
+    setTimeout(runHeroDemo, 300);
+  };
+
+  // Auto-play 1 second after page load
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(runHeroDemo, 1000);
+  });
+})();
+</script>
 {% endblock %}
