@@ -1311,7 +1311,7 @@ def privacy_policy():
             'fhir_version': 'R6 v6.0.0-ballot3',
         },
         'contact': {
-            'support': 'https://github.com/aks129/ModelContextProtocolFHIR/issues',
+            'support': 'https://github.com/aks129/fhir-mcp-guardrails/issues',
             'maintainer': 'FHIR IQ / Eugene Vestel',
             'website': 'https://www.fhiriq.com',
         },

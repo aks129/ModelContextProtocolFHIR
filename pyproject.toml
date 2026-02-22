@@ -1,5 +1,5 @@
 [project]
-name = "fhir-mcp-r6-showcase"
+name = "fhir-mcp-guardrails"
 version = "0.9.0"
 description = "R6-only Agent-First FHIR Server Showcase with MCP"
 requires-python = ">=3.11"

@@ -2,7 +2,7 @@
 
 The security layer between AI agents and clinical data.
 
-**v0.9.0** | 177 tests | 10 MCP tools | FHIR R6 v6.0.0-ballot3
+**v0.9.0** | 254 tests | 10 MCP tools | FHIR R6 v6.0.0-ballot3
 
 > FHIR standardized how health data is structured. MCP standardized how AI connects to tools.
 > Nobody standardized the guardrails in between. This project does.
@@ -50,7 +50,7 @@ open http://localhost:5000/r6-dashboard  # Interactive dashboard
 docker-compose up -d --build
 
 # Services:
-# - fhir-r6-showcase (Flask, port 5000)
+# - fhir-mcp-guardrails (Flask, port 5000)
 # - agent-orchestrator (MCP server, port 3001)
 # - redis (port 6379)
 ```

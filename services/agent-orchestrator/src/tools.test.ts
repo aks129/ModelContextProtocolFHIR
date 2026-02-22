@@ -530,7 +530,7 @@ describe("Express App Tests", () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe("healthy");
       expect(res.body.version).toBe("0.9.0");
-      expect(res.body.service).toBe("fhir-r6-mcp");
+      expect(res.body.service).toBe("fhir-mcp-guardrails");
       expect(res.body.transports).toEqual(
         expect.arrayContaining(["streamable-http", "sse", "http-bridge"])
       );
@@ -568,7 +568,7 @@ describe("Express App Tests", () => {
       expect(res.body.jsonrpc).toBe("2.0");
       expect(res.body.id).toBe(1);
       expect(res.body.result).toBeDefined();
-      expect(res.body.result.serverInfo.name).toBe("fhir-r6-mcp");
+      expect(res.body.result.serverInfo.name).toBe("fhir-mcp-guardrails");
       expect(res.body.result.serverInfo.version).toBe("0.9.0");
       expect(res.body.result.protocolVersion).toBe("2024-11-05");
       expect(res.body.result.capabilities).toHaveProperty("tools");

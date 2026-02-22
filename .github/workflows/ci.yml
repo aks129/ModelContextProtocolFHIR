@@ -1,4 +1,4 @@
-name: CI - R6 FHIR Showcase
+name: CI - FHIR MCP Guardrails
 
 on:
   push:
@@ -55,11 +55,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker images
-        run: docker compose build fhir-r6-showcase
+        run: docker compose build fhir-mcp-guardrails
 
       - name: Start services
         run: |
-          docker compose up -d fhir-r6-showcase redis
+          docker compose up -d fhir-mcp-guardrails redis
           sleep 5
 
       - name: Smoke test - R6 metadata
